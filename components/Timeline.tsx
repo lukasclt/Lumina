@@ -24,6 +24,8 @@ interface ContextMenuState {
     layerId: string | null;
 }
 
+type DragMode = 'MOVE' | 'RESIZE_L' | 'RESIZE_R' | null;
+
 export const Timeline: React.FC<TimelineProps> = ({ 
   duration, 
   currentTime, 
@@ -42,8 +44,12 @@ export const Timeline: React.FC<TimelineProps> = ({
   
   const containerRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, layerId: null });
+  
+  // Dragging State
+  const [dragMode, setDragMode] = useState<DragMode>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [isGraphView, setIsGraphView] = useState(false); // Toggle between Layer View and Graph Editor
+  
+  const [isGraphView, setIsGraphView] = useState(false);
   const [containerWidth, setContainerWidth] = useState(1000);
 
   useEffect(() => {
@@ -72,8 +78,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   };
 
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Only seek if clicking empty space or ruler, not if dragging or using tools that need specific targets
-    if (draggingId) return;
+    if (draggingId) return; // Ignore clicks if we just finished dragging
+    
     // In Graph view, seek is handled by the graph component for specific areas, but ruler still works
     if (activeTool !== Tool.SELECTION && activeTool !== Tool.RAZOR) return;
     
@@ -96,73 +102,133 @@ export const Timeline: React.FC<TimelineProps> = ({
       onSelectLayer(layerId);
   };
 
-  // --- DRAG AND DROP LOGIC ---
-  const handleMouseDown = (e: React.MouseEvent, layer: VideoSegment) => {
+  // --- INTERACTION LOGIC (Move, Resize, Razor) ---
+
+  const handleInteractionStart = (e: React.MouseEvent, layer: VideoSegment, mode: DragMode) => {
       e.stopPropagation();
-      e.preventDefault(); // Prevent text selection
-      
-      // Razor Tool Logic
+      e.preventDefault();
+
+      // RAZOR TOOL LOGIC
       if (activeTool === Tool.RAZOR) {
           const rect = containerRef.current?.getBoundingClientRect();
           if (rect) {
              const x = e.clientX - rect.left;
              const percentage = Math.max(0, Math.min(1, x / rect.width));
-             const clickTime = percentage * duration;
+             let clickTime = percentage * duration;
+
+             // Snap Razor to Playhead if close (within 1% of duration)
+             if (Math.abs(clickTime - currentTime) < (duration * 0.01)) {
+                 clickTime = currentTime;
+             }
+             
              onRazor(clickTime, layer.id);
           }
           return;
       }
 
-      // Selection / Move Tool Logic
+      // SELECTION / EDIT TOOLS
       if (activeTool === Tool.SELECTION) {
           onSelectLayer(layer.id);
-          
           if (e.button !== 0) return; // Only Left Click
+
+          setDraggingId(layer.id);
+          setDragMode(mode);
 
           const startX = e.clientX;
           const startY = e.clientY;
-          const originalStartTime = layer.start;
-          const originalTrack = layer.track;
-          const trackHeight = 64; // Height of one track in pixels (h-16 = 4rem = 64px)
+          
+          // Initial Snapshot of Layer Data
+          const initStart = layer.start;
+          const initDuration = layer.duration;
+          const initTrack = layer.track;
+          const initSrcStart = layer.srcStartTime || 0;
 
-          const isDuplicating = e.altKey;
+          const trackHeight = 64; // px
+          const isDuplicating = e.altKey && mode === 'MOVE';
           let hasDuplicated = false;
-
-          setDraggingId(layer.id);
 
           const handleMouseMove = (moveEvent: MouseEvent) => {
               if (!containerRef.current) return;
-              
               const rect = containerRef.current.getBoundingClientRect();
-              const deltaX = moveEvent.clientX - startX;
-              const deltaY = moveEvent.clientY - startY;
-
-              // Calculate Time Shift
-              const width = rect.width;
-              const timeShift = (deltaX / width) * duration;
-              let newTime = Math.max(0, originalStartTime + timeShift);
-
-              // Simple Snapping to Playhead (Magnetism)
-              if (Math.abs(newTime - currentTime) < duration * 0.01) {
-                  newTime = currentTime;
-              }
-
-              // Calculate Track Shift
-              const trackShift = Math.round(-deltaY / trackHeight);
-              let newTrack = Math.max(0, Math.min(2, originalTrack + trackShift));
-
-              if (isDuplicating && !hasDuplicated && (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5)) {
-                  onDuplicateLayer(layer.id, newTime, newTrack);
-                  hasDuplicated = true; 
-              }
               
-              if (!isDuplicating) {
-                  onUpdateLayer(layer.id, { start: newTime, track: newTrack });
+              // Delta in Pixels
+              const dx = moveEvent.clientX - startX;
+              const dy = moveEvent.clientY - startY;
+
+              // Convert Pixel Delta to Time Delta
+              const timeShift = (dx / rect.width) * duration;
+
+              if (mode === 'MOVE') {
+                  let newTime = Math.max(0, initStart + timeShift);
+                  
+                  // Snap to Playhead during move
+                  if (Math.abs(newTime - currentTime) < duration * 0.01) newTime = currentTime;
+
+                  // Calculate Track Shift
+                  const trackShift = Math.round(-dy / trackHeight);
+                  let newTrack = Math.max(0, Math.min(2, initTrack + trackShift));
+
+                  if (isDuplicating && !hasDuplicated && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+                      onDuplicateLayer(layer.id, newTime, newTrack);
+                      hasDuplicated = true; 
+                  } else if (!isDuplicating) {
+                      onUpdateLayer(layer.id, { start: newTime, track: newTrack });
+                  }
+
+              } else if (mode === 'RESIZE_L') {
+                  // Trimming Left Edge:
+                  // Start moves right (later), Duration decreases
+                  // Start moves left (earlier), Duration increases
+                  // SrcStartTime must also adjust to keep content static relative to time
+                  
+                  // Limit: Can't resize past the end (min duration 0.1s)
+                  // Limit: Can't resize before 0
+                  
+                  let newStart = initStart + timeShift;
+                  let newDuration = initDuration - timeShift;
+                  let newSrcStart = initSrcStart + timeShift;
+
+                  // Constraints
+                  if (newDuration < 0.1) {
+                      newStart = initStart + initDuration - 0.1;
+                      newDuration = 0.1;
+                      newSrcStart = initSrcStart + initDuration - 0.1;
+                  }
+                  if (newStart < 0) {
+                      newStart = 0;
+                      newDuration = initDuration + initStart; // Expand to fill start
+                      newSrcStart = initSrcStart - initStart;
+                  }
+                  // Constraint: Source Media cannot start before 0
+                  if (newSrcStart < 0) {
+                      newSrcStart = 0;
+                      newStart = initStart - initSrcStart;
+                      newDuration = initDuration + initSrcStart;
+                  }
+
+                  onUpdateLayer(layer.id, { 
+                      start: newStart, 
+                      duration: newDuration,
+                      srcStartTime: newSrcStart
+                  });
+
+              } else if (mode === 'RESIZE_R') {
+                  // Trimming Right Edge:
+                  // Only Duration changes. Start stays same. SrcStartTime stays same.
+                  
+                  let newDuration = initDuration + timeShift;
+                  if (newDuration < 0.1) newDuration = 0.1;
+                  
+                  // Optional: Constraint max duration based on source file length? 
+                  // For now we assume infinite loop or handled by <video> logic
+                  
+                  onUpdateLayer(layer.id, { duration: newDuration });
               }
           };
 
           const handleMouseUp = () => {
               setDraggingId(null);
+              setDragMode(null);
               window.removeEventListener('mousemove', handleMouseMove);
               window.removeEventListener('mouseup', handleMouseUp);
           };
@@ -291,6 +357,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                         const left = (layer.start / duration) * 100;
                         const width = (layer.duration / duration) * 100;
                         const isSelected = selectedLayerId === layer.id;
+                        const isBeingDragged = draggingId === layer.id;
                         
                         let bgColor = 'bg-violet-800/80 border-violet-600'; // Default Video
                         if (layer.type === 'text') bgColor = 'bg-pink-700/80 border-pink-500'; // Graphics
@@ -300,14 +367,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                         return (
                         <div
                             key={layer.id}
-                            onMouseDown={(e) => handleMouseDown(e, layer)}
+                            onMouseDown={(e) => handleInteractionStart(e, layer, 'MOVE')}
                             onContextMenu={(e) => handleContextMenu(e, layer.id)}
-                            className={`absolute top-0.5 bottom-0.5 rounded-[2px] border cursor-pointer overflow-hidden group ${bgColor} ${draggingId === layer.id ? 'opacity-80 z-50 shadow-lg scale-[1.01]' : 'z-10'}`}
+                            className={`absolute top-0.5 bottom-0.5 rounded-[2px] border cursor-pointer overflow-hidden group ${bgColor} ${isBeingDragged && dragMode === 'MOVE' ? 'opacity-80 z-50 shadow-lg scale-[1.01]' : 'z-10'}`}
                             style={{
                             left: `${left}%`,
                             width: `${width}%`,
                             minWidth: '2px',
-                            transition: draggingId === layer.id ? 'none' : 'top 0.2s, background-color 0.1s'
+                            transition: isBeingDragged ? 'none' : 'top 0.2s, background-color 0.1s'
                             }}
                         >
                             {/* Clip Label */}
@@ -317,16 +384,29 @@ export const Timeline: React.FC<TimelineProps> = ({
                                 {layer.animations.length > 0 && <Activity className="w-2.5 h-2.5 opacity-60 ml-1"/>}
                             </div>
                             
-                            {/* Razor Line Indicator */}
+                            {/* Razor Line Indicator (Hover Effect) */}
                             {activeTool === Tool.RAZOR && (
                                 <div className="hidden group-hover:block absolute top-0 bottom-0 w-0.5 bg-white mix-blend-difference pointer-events-none" style={{left: '50%'}}></div>
                             )}
 
-                            {/* Selection Handles */}
-                            {isSelected && activeTool === Tool.SELECTION && !draggingId && (
+                            {/* RESIZE HANDLES (Only active in Selection Tool) */}
+                            {isSelected && activeTool === Tool.SELECTION && (
                                 <>
-                                    <div className="absolute left-0 top-0 bottom-0 w-2 hover:bg-white/50 cursor-w-resize z-20"></div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 hover:bg-white/50 cursor-e-resize z-20"></div>
+                                    {/* Left Handle */}
+                                    <div 
+                                        className="absolute left-0 top-0 bottom-0 w-3 hover:bg-white/40 cursor-w-resize z-50 flex items-center justify-center group/handle"
+                                        onMouseDown={(e) => handleInteractionStart(e, layer, 'RESIZE_L')}
+                                    >
+                                        <div className="w-0.5 h-4 bg-black/30 group-hover/handle:bg-white"></div>
+                                    </div>
+
+                                    {/* Right Handle */}
+                                    <div 
+                                        className="absolute right-0 top-0 bottom-0 w-3 hover:bg-white/40 cursor-e-resize z-50 flex items-center justify-center group/handle"
+                                        onMouseDown={(e) => handleInteractionStart(e, layer, 'RESIZE_R')}
+                                    >
+                                        <div className="w-0.5 h-4 bg-black/30 group-hover/handle:bg-white"></div>
+                                    </div>
                                 </>
                             )}
                         </div>
