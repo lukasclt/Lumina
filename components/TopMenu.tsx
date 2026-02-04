@@ -11,6 +11,7 @@ interface TopMenuProps {
   onRedo: () => void;
   onDelete: () => void;
   onRenameLayer: () => void;
+  onOpenSettings: () => void;
   activePanel: PanelType;
   setActivePanel: (panel: PanelType) => void;
 }
@@ -19,7 +20,7 @@ type MenuId = 'file' | 'edit' | 'clip' | 'sequence' | null;
 
 export const TopMenu: React.FC<TopMenuProps> = ({
   onImport, onSave, onOpen, onExport,
-  onUndo, onRedo, onDelete, onRenameLayer,
+  onUndo, onRedo, onDelete, onRenameLayer, onOpenSettings,
   activePanel, setActivePanel
 }) => {
   const [activeMenu, setActiveMenu] = useState<MenuId>(null);
@@ -134,7 +135,7 @@ export const TopMenu: React.FC<TopMenuProps> = ({
               <MenuItem label="Select All" shortcut="Ctrl+A" />
               <MenuItem label="Deselect All" shortcut="Ctrl+Shift+A" />
               <Separator />
-              <MenuItem label="Preferences" hasSub />
+              <MenuItem label="Preferences" onClick={onOpenSettings} />
             </MenuDropdown>
           )}
         </div>

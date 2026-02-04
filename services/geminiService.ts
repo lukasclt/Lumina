@@ -3,16 +3,26 @@ import { VideoSegment, VideoFilter, ChatMessage } from "../types";
 
 let aiInstance: GoogleGenAI | null = null;
 
+// Helper to get cookie
+const getCookie = (name: string) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
+};
+
+export const resetAI = () => {
+    aiInstance = null;
+    console.log("AI Instance reset. New key will be used on next call.");
+};
+
 const getAI = () => {
     if (aiInstance) return aiInstance;
     try {
-        // Explicitly access window.process to ensure we get the shim defined in index.html
-        // preventing reference errors in module scope.
-        // Also check standard process.env for robust dev environment support.
-        const apiKey = (window as any).process?.env?.API_KEY || (typeof process !== 'undefined' ? process.env?.API_KEY : undefined);
+        const apiKey = getCookie('gemini_api_key');
         
         if (!apiKey) {
-            console.warn("API Key not found in window.process.env");
+            console.warn("API Key not found in cookies.");
             return null;
         }
 
@@ -92,7 +102,7 @@ const fileToGenerativePart = async (file: File): Promise<{ inlineData: { data: s
 
 export const analyzeVideoForCuts = async (file: File, duration: number, pace: 'fast' | 'balanced' | 'slow' = 'balanced'): Promise<VideoSegment[]> => {
   const ai = getAI();
-  if (!ai) throw new Error("AI Service not configured");
+  if (!ai) throw new Error("API Key missing. Please set it in Preferences.");
 
   // In a real scenario, we would upload the video bytes.
   // For this demo, we simulate the cut points based on duration if file is too large or API limits.
@@ -151,7 +161,7 @@ export const chatWithAI = async (
     sources?: { uri: string; title: string }[] 
 }> => {
   const ai = getAI();
-  if (!ai) return { text: "AI Service Unavailable (Check API Key)", toolCalls: [] };
+  if (!ai) return { text: "⚠️ API Key not configured. Go to Edit > Preferences to set your Google Gemini API Key.", toolCalls: [] };
 
   const systemInstruction = `
     You are Lumina, an expert AI Video Editor.

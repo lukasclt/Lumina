@@ -4,9 +4,10 @@ import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { ToolsBar } from './components/ToolsBar';
 import { ExportModal } from './components/ExportModal';
+import { SettingsModal } from './components/SettingsModal';
 import { TopMenu } from './components/TopMenu';
 import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe, ProjectFile, LuminaPreset } from './types';
-import { chatWithAI, analyzeVideoForCuts } from './services/geminiService';
+import { chatWithAI, analyzeVideoForCuts, resetAI } from './services/geminiService';
 
 const App: React.FC = () => {
   const [state, setState] = useState<EditingState>({
@@ -30,11 +31,45 @@ const App: React.FC = () => {
     }
   });
 
+  const [showSettings, setShowSettings] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const monitorRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const mediaImportRef = useRef<HTMLInputElement>(null);
+
+  // --- Cookie Helpers ---
+  const setCookie = (name: string, value: string, days: number) => {
+    let expires = "";
+    if (days) {
+      const date = new Date();
+      date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+      expires = "; expires=" + date.toUTCString();
+    }
+    document.cookie = name + "=" + (value || "") + expires + "; path=/";
+  };
+
+  const getCookie = (name: string) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()?.split(';').shift();
+    return "";
+  };
+
+  // Check for API Key on load
+  useEffect(() => {
+    const key = getCookie('gemini_api_key');
+    if (!key) {
+        // Automatically open settings if no key is found
+        setShowSettings(true);
+    }
+  }, []);
+
+  const handleSaveSettings = (key: string) => {
+      setCookie('gemini_api_key', key, 365); // Save for 1 year
+      resetAI(); // Reset the AI service to use the new key
+      setShowSettings(false);
+  };
 
   // --- Helper: Keyframe Interpolation with Easing ---
   const getInterpolatedValue = (layer: VideoSegment, propertyPath: string, defaultValue: number) => {
@@ -352,7 +387,7 @@ const App: React.FC = () => {
                             newLayers = [...newLayers.filter(l => l.track !== 0), ...processedCuts];
                             sysMsg = "Auto-Cut applied successfully.";
                         } catch (e) {
-                            sysMsg = "Failed to auto-cut video.";
+                            sysMsg = "Failed to auto-cut video. Check if API Key is set.";
                         }
                       } else {
                           sysMsg = "No video file loaded to cut.";
@@ -609,6 +644,14 @@ const App: React.FC = () => {
             <ExportModal onClose={() => setState(p => ({...p, showExportModal: false}))} onExport={() => { alert('Rendering Sequence...'); setState(p => ({...p, showExportModal: false})); }} />
         )}
 
+        {showSettings && (
+            <SettingsModal 
+                onClose={() => setShowSettings(false)} 
+                onSave={handleSaveSettings}
+                initialKey={getCookie('gemini_api_key') || ''}
+            />
+        )}
+
         <TopMenu 
             onImport={() => mediaImportRef.current?.click()}
             onSave={handleSaveProject}
@@ -617,6 +660,7 @@ const App: React.FC = () => {
             onUndo={() => {}} onRedo={() => {}}
             onDelete={() => handleDeleteLayer()}
             onRenameLayer={handleRenameLayer}
+            onOpenSettings={() => setShowSettings(true)}
             activePanel={state.activePanel}
             setActivePanel={(p) => setState(s => ({...s, activePanel: p}))}
         />
