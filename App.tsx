@@ -320,13 +320,77 @@ const App: React.FC = () => {
       }));
   };
 
+  // --- AI TOOL EXECUTION ---
   const handleAIChat = async (msg: string) => {
       const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: Date.now() };
       setState(prev => ({ ...prev, chatHistory: [...prev.chatHistory, userMsg], isProcessing: true }));
+      
       try {
           const result = await chatWithAI([...state.chatHistory, userMsg], { filters: state.filters, duration: state.duration });
+          
+          // 1. Add AI Text Response
           const aiMsg: ChatMessage = { role: 'assistant', content: result.text, timestamp: Date.now(), sources: result.sources };
-          setState(prev => ({ ...prev, chatHistory: [...prev.chatHistory, aiMsg], isProcessing: false }));
+          
+          let newLayers = [...state.layers];
+          let newFilters = { ...state.filters };
+          let sysMsg = "";
+
+          // 2. Execute Tools
+          if (result.toolCalls && result.toolCalls.length > 0) {
+              for (const call of result.toolCalls) {
+                  if (call.name === 'auto_cut_video') {
+                      if (state.file) {
+                        try {
+                            const cuts = await analyzeVideoForCuts(state.file, state.duration);
+                            // Populate source if missing from simulation
+                            const processedCuts = cuts.map(c => ({...c, src: state.videoUrl || '' }));
+                            // Replace current track 0 layers or append? Let's replace for "Auto-Cut"
+                            newLayers = [...newLayers.filter(l => l.track !== 0), ...processedCuts];
+                            sysMsg = "Auto-Cut applied successfully.";
+                        } catch (e) {
+                            sysMsg = "Failed to auto-cut video.";
+                        }
+                      } else {
+                          sysMsg = "No video file loaded to cut.";
+                      }
+                  } else if (call.name === 'create_motion_graphic') {
+                      const { text, style } = call.args;
+                      const newId = `ai-text-${Date.now()}`;
+                      const styleConfig: any = { fontFamily: 'Inter', fontSize: 100, color: 'white' };
+                      if (style === 'cyberpunk') { styleConfig.color = '#00ffcc'; styleConfig.textShadow = '0 0 10px #00ffcc'; styleConfig.fontFamily = 'Oswald'; }
+                      if (style === 'luxury') { styleConfig.color = '#ffd700'; styleConfig.fontFamily = 'Playfair Display'; }
+
+                      newLayers.push({
+                           id: newId, type: 'text', track: 2, start: state.currentTime, duration: 4, label: 'AI Graphic', content: text, speed: 1, 
+                           style: styleConfig,
+                           transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
+                      });
+                      sysMsg = `Created ${style} graphic: "${text}"`;
+
+                  } else if (call.name === 'apply_cinematic_grade') {
+                      const { mood } = call.args;
+                      if (mood === 'noir') newFilters = { ...DEFAULT_FILTERS, saturation: 0, contrast: 40, vignette: 50 };
+                      if (mood === 'teal_orange') newFilters = { ...DEFAULT_FILTERS, temperature: -20, tint: -10, saturation: 120, contrast: 20 };
+                      if (mood === 'matrix') newFilters = { ...DEFAULT_FILTERS, tint: -50, saturation: 80, contrast: 30 };
+                      if (mood === 'warm') newFilters = { ...DEFAULT_FILTERS, temperature: 30, saturation: 110 };
+                      sysMsg = `Applied ${mood} grading.`;
+                  }
+              }
+          }
+
+          if (sysMsg) {
+             // Optional: Add a system feedback message to chat
+             // aiMsg.content += `\n[System]: ${sysMsg}`;
+          }
+
+          setState(prev => ({ 
+              ...prev, 
+              chatHistory: [...prev.chatHistory, aiMsg], 
+              isProcessing: false,
+              layers: newLayers,
+              filters: newFilters
+          }));
+
       } catch (e) {
           console.error(e);
           setState(prev => ({ ...prev, isProcessing: false }));
