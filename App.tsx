@@ -39,6 +39,7 @@ const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const monitorRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const lastFrameTimeRef = useRef<number>(0);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const mediaImportRef = useRef<HTMLInputElement>(null);
 
@@ -166,25 +167,36 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.selectedLayerId, state.layers, state.filters]);
 
-  const updateTime = () => {
+  const updateTime = (time: number) => {
     if (videoRef.current) {
-      
-      if (state.isPlaying) {
-          // Playback Loop
-          setState(prev => {
-              // Calculate increment based on FPS (default 30 if undefined)
-              const increment = 1 / (prev.fps || 30);
-              const nextTime = prev.currentTime + increment; 
-              if (nextTime >= prev.duration) return { ...prev, isPlaying: false, currentTime: prev.duration };
-              return { ...prev, currentTime: nextTime };
-          });
-          animationFrameRef.current = requestAnimationFrame(updateTime);
-      }
+        // Calculate real delta time to ensure normal playback speed (1.0x)
+        const delta = (time - lastFrameTimeRef.current) / 1000;
+        lastFrameTimeRef.current = time;
+
+        // Prevent huge jumps (e.g. if browser tab was suspended)
+        if (delta > 0.5) {
+             animationFrameRef.current = requestAnimationFrame(updateTime);
+             return;
+        }
+
+        setState(prev => {
+            if (!prev.isPlaying) return prev;
+            
+            const nextTime = prev.currentTime + delta;
+            
+            if (nextTime >= prev.duration) {
+                return { ...prev, isPlaying: false, currentTime: prev.duration };
+            }
+            return { ...prev, currentTime: nextTime };
+        });
+        
+        animationFrameRef.current = requestAnimationFrame(updateTime);
     }
   };
 
   useEffect(() => {
     if (state.isPlaying) {
+      lastFrameTimeRef.current = performance.now();
       animationFrameRef.current = requestAnimationFrame(updateTime);
     } else {
       if (videoRef.current) videoRef.current.pause();
@@ -212,12 +224,13 @@ const App: React.FC = () => {
           const sourceTime = (activeClip.srcStartTime || 0) + offset;
           
           // Only seek if we are significantly off (prevent stutter)
-          if (Math.abs(videoRef.current.currentTime - sourceTime) > 0.3) {
+          // Tightened threshold for smoother cuts
+          if (Math.abs(videoRef.current.currentTime - sourceTime) > 0.2) {
               videoRef.current.currentTime = sourceTime;
           }
           
           if (videoRef.current.paused && state.isPlaying) {
-              videoRef.current.play().catch(e => console.log("Play interrupted", e));
+              videoRef.current.play().catch(e => { /* Ignore play interrupts */ });
           }
           if (!videoRef.current.paused && !state.isPlaying) videoRef.current.pause();
 
