@@ -3,7 +3,7 @@ import {
     Sparkles, Type, MessageSquare, Box, Layers, Settings, 
     Palette, User, Bot, Send, Link as LinkIcon, 
     Clock, Search, FolderOpen, Film, Image as ImageIcon,
-    SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle
+    SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2
 } from 'lucide-react';
 import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage } from '../types';
 
@@ -27,6 +27,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
+      'video-transitions': true,
+      'video-effects': true,
+      'audio-effects': false
+  });
 
   useEffect(() => {
     if (activePanel === PanelType.AI_AGENT) {
@@ -52,6 +57,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setChatInput("");
   };
 
+  const toggleFolder = (id: string) => {
+      setExpandedFolders(prev => ({...prev, [id]: !prev[id]}));
+  };
+
   const renderPropertyRow = (label: string, value: number, onChange: (v: number) => void, min: number, max: number, unit = '') => (
       <div className="flex items-center justify-between group py-1 border-b border-[#2a2a2a]/50">
           <div className="flex items-center gap-2">
@@ -74,10 +83,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Panel Tabs Header */}
       <div className="flex bg-[#161616] border-b border-[#2a2a2a] text-[11px] font-medium text-gray-400 overflow-x-auto no-scrollbar">
         {[
-          { id: PanelType.PROJECT, label: 'Project: Lumina' },
+          { id: PanelType.PROJECT, label: 'Project' },
           { id: PanelType.EFFECT_CONTROLS, label: 'Effect Controls' },
           { id: PanelType.LUMETRI, label: 'Lumetri Color' },
-          { id: PanelType.ESSENTIAL_GRAPHICS, label: 'Ess. Graphics' },
+          { id: PanelType.EFFECTS_LIBRARY, label: 'Effects' },
+          { id: PanelType.AUDIO_MIXER, label: 'Audio Mixer' },
+          { id: PanelType.ESSENTIAL_GRAPHICS, label: 'Graphics' },
           { id: PanelType.AI_AGENT, label: 'AI Agent' },
         ].map((tab) => (
           <button 
@@ -114,6 +125,108 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 ))}
             </div>
           </div>
+        )}
+
+        {/* --- EFFECTS LIBRARY --- */}
+        {activePanel === PanelType.EFFECTS_LIBRARY && (
+            <div className="p-2 select-none">
+                 <div className="flex items-center gap-2 mb-2 p-1 bg-[#2a2a2a] rounded text-gray-400">
+                    <Search className="w-3 h-3"/>
+                    <input type="text" placeholder="Search Effects" className="bg-transparent outline-none w-full"/>
+                </div>
+
+                {/* Video Transitions */}
+                <div>
+                    <div 
+                        className="flex items-center gap-1 py-1 cursor-pointer hover:bg-[#2a2a2a] text-gray-300 font-semibold"
+                        onClick={() => toggleFolder('video-transitions')}
+                    >
+                        {expandedFolders['video-transitions'] ? <ChevronDown className="w-3 h-3"/> : <ChevronRight className="w-3 h-3"/>}
+                        <Folder className="w-3 h-3 fill-yellow-600 text-yellow-600"/>
+                        Video Transitions
+                    </div>
+                    {expandedFolders['video-transitions'] && (
+                        <div className="pl-4 border-l border-[#333] ml-2">
+                            {['Cross Dissolve', 'Dip to Black', 'Dip to White', 'Wipe', 'Slide', 'Push'].map(fx => (
+                                <div key={fx} className="py-1 pl-2 text-gray-400 hover:bg-[#333] hover:text-white cursor-pointer flex items-center gap-2 group">
+                                    <Box className="w-3 h-3 opacity-50"/> {fx}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Video Effects */}
+                <div>
+                    <div 
+                        className="flex items-center gap-1 py-1 cursor-pointer hover:bg-[#2a2a2a] text-gray-300 font-semibold"
+                        onClick={() => toggleFolder('video-effects')}
+                    >
+                        {expandedFolders['video-effects'] ? <ChevronDown className="w-3 h-3"/> : <ChevronRight className="w-3 h-3"/>}
+                        <Folder className="w-3 h-3 fill-yellow-600 text-yellow-600"/>
+                        Video Effects
+                    </div>
+                    {expandedFolders['video-effects'] && (
+                        <div className="pl-4 border-l border-[#333] ml-2">
+                             <div className="text-[10px] text-gray-500 font-bold mt-1 mb-1">Blur & Sharpen</div>
+                             {['Gaussian Blur', 'Sharpen', 'Directional Blur'].map(fx => (
+                                <div key={fx} className="py-1 pl-2 text-gray-400 hover:bg-[#333] hover:text-white cursor-pointer flex items-center gap-2">
+                                    <Wand2 className="w-3 h-3 opacity-50"/> {fx}
+                                </div>
+                            ))}
+                             <div className="text-[10px] text-gray-500 font-bold mt-1 mb-1">Color Correction</div>
+                             {['Lumetri Color', 'Tint', 'Black & White'].map(fx => (
+                                <div key={fx} className="py-1 pl-2 text-gray-400 hover:bg-[#333] hover:text-white cursor-pointer flex items-center gap-2">
+                                    <Wand2 className="w-3 h-3 opacity-50"/> {fx}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                 {/* Audio Effects */}
+                 <div>
+                    <div 
+                        className="flex items-center gap-1 py-1 cursor-pointer hover:bg-[#2a2a2a] text-gray-300 font-semibold"
+                        onClick={() => toggleFolder('audio-effects')}
+                    >
+                        {expandedFolders['audio-effects'] ? <ChevronDown className="w-3 h-3"/> : <ChevronRight className="w-3 h-3"/>}
+                        <Folder className="w-3 h-3 fill-green-700 text-green-700"/>
+                        Audio Effects
+                    </div>
+                    {expandedFolders['audio-effects'] && (
+                        <div className="pl-4 border-l border-[#333] ml-2">
+                            {['DeNoise', 'Reverb', 'Parametric Equalizer', 'Hard Limiter'].map(fx => (
+                                <div key={fx} className="py-1 pl-2 text-gray-400 hover:bg-[#333] hover:text-white cursor-pointer flex items-center gap-2 group">
+                                    <Music className="w-3 h-3 opacity-50"/> {fx}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* --- AUDIO MIXER --- */}
+        {activePanel === PanelType.AUDIO_MIXER && (
+             <div className="p-4 flex gap-4 h-full">
+                 {['A1', 'A2', 'A3', 'Master'].map((track, idx) => (
+                     <div key={track} className="flex flex-col items-center h-full bg-[#121212] border border-[#333] p-2 rounded w-16">
+                         <span className="text-gray-400 font-bold mb-2">{track}</span>
+                         <div className="flex-1 w-2 bg-[#2a2a2a] rounded relative overflow-hidden group">
+                             {/* Mock dB Meter */}
+                             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-green-500 via-yellow-500 to-red-500 h-[60%] opacity-50 animate-pulse"></div>
+                         </div>
+                         <div className="h-32 mt-2 w-full flex items-center justify-center relative">
+                             {/* Fader Track */}
+                             <div className="w-1 h-full bg-[#333] rounded"></div>
+                             {/* Fader Handle */}
+                             <div className="absolute w-8 h-4 bg-[#444] border border-gray-500 rounded shadow-lg cursor-ns-resize hover:bg-gray-300 top-1/2"></div>
+                         </div>
+                         <span className="mt-2 text-blue-400 font-mono">0.0</span>
+                     </div>
+                 ))}
+             </div>
         )}
 
         {/* --- EFFECT CONTROLS --- */}

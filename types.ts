@@ -20,7 +20,8 @@ export interface AnimationKeyframe {
 export interface VideoEffect {
   id: string;
   name: string;
-  type: 'blur' | 'chroma' | 'glow' | 'sharpen' | 'vignette';
+  category: 'Video Effect' | 'Video Transition' | 'Audio Effect';
+  type: 'blur' | 'chroma' | 'glow' | 'sharpen' | 'vignette' | 'dissolve' | 'wipe';
   properties: Record<string, number>;
   enabled: boolean;
 }
@@ -87,6 +88,7 @@ export interface EditingState {
   chatHistory: ChatMessage[];
   activeTool: Tool;
   activePanel: PanelType;
+  showExportModal: boolean;
   preferences: {
     theme: 'dark';
     autoSave: boolean;
@@ -99,6 +101,8 @@ export enum PanelType {
   EFFECT_CONTROLS = 'EFFECT_CONTROLS',
   LUMETRI = 'LUMETRI',
   ESSENTIAL_GRAPHICS = 'ESSENTIAL_GRAPHICS',
+  EFFECTS_LIBRARY = 'EFFECTS_LIBRARY',
+  AUDIO_MIXER = 'AUDIO_MIXER',
   AI_AGENT = 'AI_AGENT'
 }
 

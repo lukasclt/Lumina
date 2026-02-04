@@ -9,6 +9,7 @@ interface TimelineProps {
   selectedLayerId: string | null;
   onSeek: (time: number) => void;
   onSelectLayer: (id: string) => void;
+  onRazor: (time: number, layerId: string) => void;
   activeTool: Tool;
 }
 
@@ -19,6 +20,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   selectedLayerId,
   onSeek, 
   onSelectLayer,
+  onRazor,
   activeTool
 }) => {
   const vTracks = [2, 1, 0]; // V3, V2, V1
@@ -32,19 +34,34 @@ export const Timeline: React.FC<TimelineProps> = ({
   };
 
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Only seek if clicking empty space or ruler, handled partly here and by layer propagation
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, x / rect.width));
-    
-    if (activeTool === Tool.SELECTION || activeTool === Tool.RAZOR) {
-        onSeek(percentage * duration);
-    }
+    const clickTime = percentage * duration;
+
+    // Default seek behavior if clicking on ruler or empty space (unless handled by layer click)
+    onSeek(clickTime);
+  };
+
+  const handleLayerClick = (e: React.MouseEvent<HTMLDivElement>, layer: VideoSegment) => {
+      e.stopPropagation();
+      
+      if (activeTool === Tool.RAZOR) {
+          const rect = e.currentTarget.parentElement?.parentElement?.getBoundingClientRect(); // Get timeline width container
+          if (rect) {
+             const x = e.clientX - rect.left;
+             const percentage = Math.max(0, Math.min(1, x / rect.width));
+             const clickTime = percentage * duration;
+             onRazor(clickTime, layer.id);
+          }
+      } else {
+          onSelectLayer(layer.id);
+      }
   };
 
   const getCursor = () => {
       switch(activeTool) {
-          case Tool.RAZOR: return 'cursor-cell'; // Close enough to razor
+          case Tool.RAZOR: return 'cursor-crosshair'; 
           case Tool.HAND: return 'cursor-grab';
           case Tool.RIPPLE_EDIT: return 'cursor-col-resize';
           case Tool.ROLLING_EDIT: return 'cursor-ew-resize';
@@ -129,10 +146,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 return (
                   <div
                     key={layer.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectLayer(layer.id);
-                    }}
+                    onClick={(e) => handleLayerClick(e, layer)}
                     className={`absolute top-0.5 bottom-0.5 rounded-[2px] border cursor-pointer overflow-hidden group ${bgColor}`}
                     style={{
                       left: `${left}%`,
@@ -146,8 +160,13 @@ export const Timeline: React.FC<TimelineProps> = ({
                         {layer.label}
                     </div>
                     
-                    {/* Selection Handles (Visual only for now) */}
-                    {isSelected && (
+                    {/* Razor Line Indicator (Visual only, would need mouse tracking for perfect UX) */}
+                    {activeTool === Tool.RAZOR && (
+                        <div className="hidden group-hover:block absolute top-0 bottom-0 w-0.5 bg-white mix-blend-difference pointer-events-none" style={{left: '50%'}}></div>
+                    )}
+
+                    {/* Selection Handles */}
+                    {isSelected && activeTool === Tool.SELECTION && (
                         <>
                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-white/50 cursor-w-resize"></div>
                             <div className="absolute right-0 top-0 bottom-0 w-1 bg-white/50 cursor-e-resize"></div>
@@ -164,9 +183,8 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* Audio Clips (Simulated) */}
           {aTracks.map((trackId) => (
              <div key={`a-content-${trackId}`} className="h-16 border-b border-[#2a2a2a] relative w-full bg-[#181818]">
-                {/* Audio clips would go here. Visual placeholder for Master Audio if track 0 */}
                 {trackId === 0 && (
-                     <div className="absolute top-1 bottom-1 left-0 right-0 bg-emerald-900/40 border border-emerald-800/50 m-1 rounded flex items-center justify-center">
+                     <div className="absolute top-1 bottom-1 left-0 right-0 bg-emerald-900/40 border border-emerald-800/50 m-1 rounded flex items-center justify-center pointer-events-none">
                          <span className="text-emerald-500/50 text-[9px] tracking-widest">AUDIO WAVEFORM SIMULATION</span>
                      </div>
                 )}

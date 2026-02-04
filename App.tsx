@@ -3,6 +3,7 @@ import { Upload, Play, Pause, Download, Settings, FileImage, FileVideo, Video, M
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { ToolsBar } from './components/ToolsBar';
+import { ExportModal } from './components/ExportModal';
 import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe } from './types';
 import { chatWithAI, analyzeVideoForCuts } from './services/geminiService';
 
@@ -20,6 +21,7 @@ const App: React.FC = () => {
     chatHistory: [],
     activeTool: Tool.SELECTION,
     activePanel: PanelType.PROJECT,
+    showExportModal: false,
     preferences: {
         theme: 'dark',
         autoSave: true,
@@ -167,6 +169,39 @@ const App: React.FC = () => {
       }));
   };
 
+  const handleRazor = (time: number, layerId: string) => {
+      setState(prev => {
+          const layerToSplit = prev.layers.find(l => l.id === layerId);
+          if (!layerToSplit) return prev;
+          
+          // Check if time is within layer bounds
+          if (time <= layerToSplit.start || time >= (layerToSplit.start + layerToSplit.duration)) return prev;
+
+          const splitRelative = time - layerToSplit.start;
+          
+          // 1. Update First Part (keep ID, update duration)
+          const firstPart = {
+              ...layerToSplit,
+              duration: splitRelative
+          };
+
+          // 2. Create Second Part
+          const secondPart: VideoSegment = {
+              ...layerToSplit,
+              id: `${layerToSplit.id}-split-${Date.now()}`,
+              start: time,
+              duration: layerToSplit.duration - splitRelative,
+              // If it were a real video engine, we would adjust internal 'offset' here
+          };
+
+          return {
+              ...prev,
+              layers: prev.layers.map(l => l.id === layerId ? firstPart : l).concat(secondPart),
+              selectedLayerId: secondPart.id // Select the new part
+          };
+      });
+  };
+
   const togglePlay = () => setState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
 
   const updateLayer = (id: string, updates: Partial<VideoSegment>) => {
@@ -177,9 +212,6 @@ const App: React.FC = () => {
   };
 
   // --- Rendering Compositon ---
-  // Interpolation logic remains similar but simplified for brevity
-  const getAnimatedValue = (layer: VideoSegment, prop: string, base: number) => base; // Placeholder for full keyframe engine
-
   const renderOverlays = () => {
       return state.layers
         .filter(l => l.isActive && l.track > 0) // Track 0 is usually main video (handled by video tag)
@@ -232,9 +264,17 @@ const App: React.FC = () => {
     grayscale(${state.filters.saturation === 0 ? 100 : 0}%)
   `;
 
-  // --- Main Render (The Adobe Layout) ---
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-gray-200 overflow-hidden font-sans select-none">
+        
+        {/* Export Modal */}
+        {state.showExportModal && (
+            <ExportModal 
+                onClose={() => setState(p => ({...p, showExportModal: false}))} 
+                onExport={() => { alert('Rendering Sequence...'); setState(p => ({...p, showExportModal: false})); }}
+            />
+        )}
+
         {/* Header / Menu Bar */}
         <div className="h-10 bg-[#1e1e1e] border-b border-[#2a2a2a] flex items-center px-4 gap-4 text-xs">
             <div className="flex items-center gap-2">
@@ -252,7 +292,12 @@ const App: React.FC = () => {
                 <span className="hover:text-white cursor-pointer">Effects</span>
             </div>
             <div className="flex-1"></div>
-            <button className="bg-blue-600 px-3 py-1 rounded text-white font-bold">Export</button>
+            <button 
+                onClick={() => setState(p => ({...p, showExportModal: true}))}
+                className="bg-blue-600 px-3 py-1 rounded text-white font-bold hover:bg-blue-700 transition-colors"
+            >
+                Export
+            </button>
         </div>
 
         {/* Workspace Grid */}
@@ -360,6 +405,7 @@ const App: React.FC = () => {
                                 setState(s => ({...s, currentTime: t}));
                             }}
                             onSelectLayer={(id) => setState(s => ({...s, selectedLayerId: id, activePanel: PanelType.EFFECT_CONTROLS}))}
+                            onRazor={handleRazor}
                             activeTool={state.activeTool}
                         />
                      </div>
