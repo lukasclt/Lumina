@@ -29,7 +29,17 @@ const getAI = () => {
 const cutVideoTool: FunctionDeclaration = {
     name: "auto_cut_video",
     description: "Analyzes the video content and automatically cuts/trims it to keep the most interesting segments.",
-    parameters: { type: Type.OBJECT, properties: {}, required: [] }
+    parameters: { 
+        type: Type.OBJECT, 
+        properties: {
+            pace: {
+                type: Type.STRING,
+                enum: ["fast", "balanced", "slow"],
+                description: "The pacing of the edit. 'fast' for dynamic quick cuts, 'slow' for long takes."
+            }
+        }, 
+        required: ["pace"] 
+    }
 };
 
 const motionGraphicTool: FunctionDeclaration = {
@@ -80,7 +90,7 @@ const fileToGenerativePart = async (file: File): Promise<{ inlineData: { data: s
   });
 };
 
-export const analyzeVideoForCuts = async (file: File, duration: number): Promise<VideoSegment[]> => {
+export const analyzeVideoForCuts = async (file: File, duration: number, pace: 'fast' | 'balanced' | 'slow' = 'balanced'): Promise<VideoSegment[]> => {
   const ai = getAI();
   if (!ai) throw new Error("AI Service not configured");
 
@@ -88,8 +98,19 @@ export const analyzeVideoForCuts = async (file: File, duration: number): Promise
   // For this demo, we simulate the cut points based on duration if file is too large or API limits.
   // If file is small, we could send frames. Here we mock the intelligence for reliability in the demo.
   
-  // Generating pseudo-intelligent cuts
-  const cutCount = 3 + Math.floor(Math.random() * 3); // 3 to 5 cuts
+  // Generating pseudo-intelligent cuts based on Pace
+  let minCuts = 3;
+  let maxCuts = 5;
+  
+  if (pace === 'fast') {
+      minCuts = 6;
+      maxCuts = 12;
+  } else if (pace === 'slow') {
+      minCuts = 1;
+      maxCuts = 3;
+  }
+
+  const cutCount = minCuts + Math.floor(Math.random() * (maxCuts - minCuts + 1));
   const segmentDuration = duration / cutCount;
   const segments: VideoSegment[] = [];
 
@@ -136,11 +157,11 @@ export const chatWithAI = async (
     You are Lumina, an expert AI Video Editor.
     User Context: Duration ${currentContext.duration}s.
     
-    If the user asks to "cut", "trim", or "edit" the video automatically, call 'auto_cut_video'.
+    If the user asks to "cut", "trim", or "edit" the video automatically, call 'auto_cut_video'. default pace to 'balanced' unless specified.
     If the user asks for "text", "titles", or "graphics", call 'create_motion_graphic'.
     If the user asks for "color", "grade", or "look", call 'apply_cinematic_grade'.
     
-    Be concise.
+    Be concise. Answer in the language of the user (likely Portuguese or English).
   `;
 
   // Map history to Gemini Content format.
@@ -179,8 +200,10 @@ export const chatWithAI = async (
 
     return { text: finalText, toolCalls };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Agent Error:", error);
-    return { text: "Error connecting to AI. Please try again.", toolCalls: [] };
+    // Return a more descriptive error if possible
+    const errorMsg = error.message || "Error connecting to AI.";
+    return { text: `Error: ${errorMsg}. Please try again.`, toolCalls: [] };
   }
 };

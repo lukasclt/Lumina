@@ -343,8 +343,9 @@ const App: React.FC = () => {
               for (const call of result.toolCalls) {
                   if (call.name === 'auto_cut_video') {
                       if (state.file) {
+                        const pace = call.args?.pace || 'balanced';
                         try {
-                            const cuts = await analyzeVideoForCuts(state.file, state.duration);
+                            const cuts = await analyzeVideoForCuts(state.file, state.duration, pace);
                             // Populate source if missing from simulation
                             const processedCuts = cuts.map(c => ({...c, src: state.videoUrl || '' }));
                             // Replace current track 0 layers or append? Let's replace for "Auto-Cut"
