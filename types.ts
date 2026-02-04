@@ -36,6 +36,7 @@ export interface VideoSegment {
   track: number; // 0, 1, 2 (Vertical stacking)
   label: string;
   src?: string; // For images/video/audio
+  srcStartTime?: number; // Where in the source file this clip begins (For cuts)
   content?: string; // For text
   speed: number; // 1.0 is normal speed
   style?: {

@@ -1,5 +1,5 @@
 import { GoogleGenAI, FunctionDeclaration, Type, Tool } from "@google/genai";
-import { VideoSegment, VideoFilter, ChatMessage } from "../types";
+import { VideoSegment, VideoFilter, ChatMessage, DEFAULT_TRANSFORM } from "../types";
 
 let aiInstance: GoogleGenAI | null = null;
 
@@ -38,17 +38,22 @@ const getAI = () => {
 
 const cutVideoTool: FunctionDeclaration = {
     name: "auto_cut_video",
-    description: "Analyzes the video content and automatically cuts/trims it to keep the most interesting segments.",
+    description: "Analyzes the video. Use 'mode: remove_silence' to cut breaths/pauses. Use 'mode: pace' for rhythmic editing.",
     parameters: { 
         type: Type.OBJECT, 
         properties: {
-            pace: {
+            mode: {
                 type: Type.STRING,
-                enum: ["fast", "balanced", "slow"],
-                description: "The pacing of the edit. 'fast' for dynamic quick cuts, 'slow' for long takes."
+                enum: ["remove_silence", "pace"],
+                description: "Choose 'remove_silence' to cut low volume parts (breaths), or 'pace' for stylistic cuts."
+            },
+            intensity: {
+                type: Type.STRING,
+                enum: ["low", "medium", "high"],
+                description: "For silence: threshold sensitivity. For pace: speed of cuts."
             }
         }, 
-        required: ["pace"] 
+        required: ["mode"] 
     }
 };
 
@@ -77,7 +82,7 @@ const colorGradeTool: FunctionDeclaration = {
         properties: {
             mood: { 
                 type: Type.STRING, 
-                enum: ["noir", "teal_orange", "warm", "matrix"],
+                enum: ["noir", "teal_orange", "warm", "matrix", "clean"],
                 description: "The desired mood." 
             }
         },
@@ -85,39 +90,143 @@ const colorGradeTool: FunctionDeclaration = {
     }
 };
 
-// --- Service Functions ---
+// --- REAL AUDIO ANALYSIS LOGIC ---
 
-const fileToGenerativePart = async (file: File): Promise<{ inlineData: { data: string; mimeType: string } }> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      const base64Data = result.includes(',') ? result.split(',')[1] : result;
-      resolve({ inlineData: { data: base64Data, mimeType: file.type } });
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+const detectSilenceAndCut = async (file: File, threshold = 0.02, minSilenceDuration = 0.4): Promise<VideoSegment[]> => {
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        const rawData = audioBuffer.getChannelData(0); // Analyze left channel
+        const sampleRate = audioBuffer.sampleRate;
+        const segments: VideoSegment[] = [];
+        
+        let isSpeaking = false;
+        let speakStart = 0;
+        let silenceStart = 0;
+        
+        // Window size for RMS calculation (e.g., 50ms)
+        const windowSize = Math.floor(sampleRate * 0.05); 
+        
+        for (let i = 0; i < rawData.length; i += windowSize) {
+            // Calculate RMS (Root Mean Square) volume for this window
+            let sum = 0;
+            for (let j = 0; j < windowSize && i + j < rawData.length; j++) {
+                sum += rawData[i + j] * rawData[i + j];
+            }
+            const rms = Math.sqrt(sum / windowSize);
+            
+            if (rms > threshold) {
+                // Sound detected
+                if (!isSpeaking) {
+                    isSpeaking = true;
+                    speakStart = i / sampleRate;
+                    // Add a tiny bit of padding before (attack)
+                    speakStart = Math.max(0, speakStart - 0.1);
+                }
+            } else {
+                // Silence detected
+                if (isSpeaking) {
+                    const currentTime = i / sampleRate;
+                    if (currentTime - silenceStart > minSilenceDuration) {
+                        // We found a valid silence gap, commit the previous speech segment
+                        isSpeaking = false;
+                        const duration = currentTime - speakStart;
+                        
+                        // Only keep segments longer than 0.5s to avoid glitches
+                        if (duration > 0.5) {
+                            segments.push({
+                                id: `seg-${Date.now()}-${segments.length}`,
+                                type: 'video',
+                                track: 0,
+                                start: 0, // Will be recalculated sequentially by the caller
+                                duration: duration, // Source duration
+                                srcStartTime: speakStart, // Custom prop for source mapping (handled in simulation by just keeping duration)
+                                label: `Clip ${segments.length + 1}`,
+                                src: '', 
+                                speed: 1,
+                                transform: { ...DEFAULT_TRANSFORM },
+                                anchorPoint: { x: 0.5, y: 0.5 },
+                                opacity: 1,
+                                blendMode: 'normal',
+                                effects: [],
+                                animations: [],
+                                isActive: true,
+                                locked: false
+                            });
+                        }
+                    }
+                } else {
+                    silenceStart = i / sampleRate;
+                }
+            }
+        }
+
+        // Handle end of file
+        if (isSpeaking) {
+             const duration = (rawData.length / sampleRate) - speakStart;
+             segments.push({
+                id: `seg-${Date.now()}-${segments.length}`,
+                type: 'video',
+                track: 0,
+                start: 0,
+                duration: duration,
+                srcStartTime: speakStart,
+                label: `Clip ${segments.length + 1}`,
+                src: '', 
+                speed: 1,
+                transform: { ...DEFAULT_TRANSFORM },
+                anchorPoint: { x: 0.5, y: 0.5 },
+                opacity: 1,
+                blendMode: 'normal',
+                effects: [],
+                animations: [],
+                isActive: true,
+                locked: false
+            });
+        }
+
+        return segments;
+
+    } catch (e) {
+        console.error("Audio Analysis Failed:", e);
+        throw new Error("Could not analyze audio track. Make sure the video has audio.");
+    }
 };
 
-export const analyzeVideoForCuts = async (file: File, duration: number, pace: 'fast' | 'balanced' | 'slow' = 'balanced'): Promise<VideoSegment[]> => {
-  const ai = getAI();
-  if (!ai) throw new Error("API Key missing. Please set it in Preferences.");
+// --- SERVICE FUNCTIONS ---
 
-  // In a real scenario, we would upload the video bytes.
-  // For this demo, we simulate the cut points based on duration if file is too large or API limits.
-  // If file is small, we could send frames. Here we mock the intelligence for reliability in the demo.
+export const analyzeVideoForCuts = async (file: File, duration: number, mode: 'remove_silence' | 'pace', intensity: string): Promise<VideoSegment[]> => {
   
-  // Generating pseudo-intelligent cuts based on Pace
+  // REAL ANALYSIS: Remove Silence / Breaths
+  if (mode === 'remove_silence') {
+      let threshold = 0.02; // Default Medium
+      if (intensity === 'high') threshold = 0.05; // Aggressive cut (cuts quiet talking too)
+      if (intensity === 'low') threshold = 0.005; // Gentle cut (only cuts absolute silence)
+
+      console.log("Starting Audio Analysis...");
+      const segments = await detectSilenceAndCut(file, threshold);
+      
+      // Post-process: Layout sequentially on timeline
+      let currentTime = 0;
+      return segments.map(seg => {
+          const s = { ...seg, start: currentTime };
+          currentTime += seg.duration;
+          return s;
+      });
+  }
+
+  // SIMULATION: Stylistic Pacing (Randomized)
   let minCuts = 3;
   let maxCuts = 5;
   
-  if (pace === 'fast') {
-      minCuts = 6;
-      maxCuts = 12;
-  } else if (pace === 'slow') {
-      minCuts = 1;
-      maxCuts = 3;
+  if (intensity === 'high') { // Fast pace
+      minCuts = 8;
+      maxCuts = 15;
+  } else if (intensity === 'low') { // Slow pace
+      minCuts = 2;
+      maxCuts = 4;
   }
 
   const cutCount = minCuts + Math.floor(Math.random() * (maxCuts - minCuts + 1));
@@ -125,20 +234,20 @@ export const analyzeVideoForCuts = async (file: File, duration: number, pace: 'f
   const segments: VideoSegment[] = [];
 
   for(let i=0; i<cutCount; i++) {
-      // Keep 70% of the segment, remove 30% (simulating trimming boring parts)
       const start = i * segmentDuration;
-      const keepDur = segmentDuration * 0.7; 
+      const keepDur = segmentDuration * 0.8; // Keep 80%
       
       segments.push({
         id: `seg-${Date.now()}-${i}`,
         type: 'video',
         track: 0,
-        start: start, // Timeline position (simple sequence)
-        duration: keepDur, // Source duration
-        label: `Highlight ${i+1}`,
-        src: '', // This needs to be filled by the caller with the actual video URL
+        start: segments.length > 0 ? (segments[segments.length-1].start + segments[segments.length-1].duration) : 0,
+        duration: keepDur,
+        srcStartTime: start, // Simulate jumping ahead
+        label: `Scene ${i+1}`,
+        src: '',
         speed: 1,
-        transform: { rotateX: 0, rotateY: 0, rotateZ: 0, scale: 100, translateX: 0, translateY: 0, perspective: 1000 },
+        transform: { ...DEFAULT_TRANSFORM },
         anchorPoint: {x: 0.5, y:0.5},
         opacity: 1,
         blendMode: 'normal',
@@ -164,18 +273,19 @@ export const chatWithAI = async (
   if (!ai) return { text: "⚠️ API Key not configured. Go to Edit > Preferences to set your Google Gemini API Key.", toolCalls: [] };
 
   const systemInstruction = `
-    You are Lumina, an expert AI Video Editor.
-    User Context: Duration ${currentContext.duration}s.
+    You are Lumina, a Professional AI Video Editor.
+    Context: Video Duration ${currentContext.duration.toFixed(1)}s.
     
-    If the user asks to "cut", "trim", or "edit" the video automatically, call 'auto_cut_video'. default pace to 'balanced' unless specified.
-    If the user asks for "text", "titles", or "graphics", call 'create_motion_graphic'.
-    If the user asks for "color", "grade", or "look", call 'apply_cinematic_grade'.
+    TASKS:
+    1. CUTTING: If user mentions "silence", "breaths", "pauses", or "clean up audio", call 'auto_cut_video' with mode='remove_silence'.
+       If user mentions "fast cut", "dynamic", "music video style", call 'auto_cut_video' with mode='pace'.
+    2. GRAPHICS: If user wants text/titles, call 'create_motion_graphic'. Choose a style that fits the request.
+    3. COLOR: If user wants specific looks, call 'apply_cinematic_grade'.
     
-    Be concise. Answer in the language of the user (likely Portuguese or English).
+    RESPONSE:
+    Be short, professional, and confirm the action. Example: "Removing silent parts to tighten the flow."
   `;
 
-  // Map history to Gemini Content format.
-  // history already contains the latest user message.
   const contents = history.map(msg => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
@@ -205,14 +315,12 @@ export const chatWithAI = async (
             args: p.functionCall?.args
         })) || [];
         
-    // Handle case where model only returns tool calls and no text
-    const finalText = text || (toolCalls.length > 0 ? "Executing commands..." : "I didn't understand that.");
+    const finalText = text || (toolCalls.length > 0 ? "Processing edits..." : "I didn't understand that.");
 
     return { text: finalText, toolCalls };
 
   } catch (error: any) {
     console.error("Gemini Agent Error:", error);
-    // Return a more descriptive error if possible
     const errorMsg = error.message || "Error connecting to AI.";
     return { text: `Error: ${errorMsg}. Please try again.`, toolCalls: [] };
   }

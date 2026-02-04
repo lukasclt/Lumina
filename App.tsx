@@ -155,16 +155,36 @@ const App: React.FC = () => {
 
   const updateTime = () => {
     if (videoRef.current) {
-      const t = videoRef.current.currentTime;
-      setState(prev => ({ ...prev, currentTime: t }));
-      if (t >= state.duration) setState(prev => ({ ...prev, isPlaying: false }));
-      else animationFrameRef.current = requestAnimationFrame(updateTime);
+      
+      if (state.isPlaying) {
+          // Playback Loop
+          setState(prev => {
+              const nextTime = prev.currentTime + 0.033; // ~30fps
+              if (nextTime >= prev.duration) return { ...prev, isPlaying: false, currentTime: prev.duration };
+              
+              // Note: We do NOT skip gaps automatically. Professional editors play black frames during gaps.
+              // To enable "Gap Skipping" uncomment below:
+              /*
+              const activeClip = prev.layers.find(l => l.track === 0 && nextTime >= l.start && nextTime < l.start + l.duration);
+              if (!activeClip && prev.layers.some(l => l.track === 0)) {
+                  // Find next clip
+                  const nextClip = prev.layers
+                    .filter(l => l.track === 0 && l.start > nextTime)
+                    .sort((a,b) => a.start - b.start)[0];
+                  
+                  if (nextClip) return { ...prev, currentTime: nextClip.start };
+              }
+              */
+
+              return { ...prev, currentTime: nextTime };
+          });
+          animationFrameRef.current = requestAnimationFrame(updateTime);
+      }
     }
   };
 
   useEffect(() => {
     if (state.isPlaying) {
-      if (videoRef.current) videoRef.current.play();
       animationFrameRef.current = requestAnimationFrame(updateTime);
     } else {
       if (videoRef.current) videoRef.current.pause();
@@ -172,6 +192,42 @@ const App: React.FC = () => {
     }
     return () => { if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current); };
   }, [state.isPlaying]);
+
+  // Sync Video Element with Virtual Playhead
+  useEffect(() => {
+      if (!videoRef.current) return;
+      
+      // Find the clip that should be playing right now on TRACK 0 (Main Video)
+      const activeClip = state.layers.find(l => 
+          l.track === 0 && 
+          l.type === 'video' &&
+          state.currentTime >= l.start && 
+          state.currentTime < (l.start + l.duration)
+      );
+
+      if (activeClip) {
+          // Calculate Offset inside the clip
+          const offset = state.currentTime - activeClip.start;
+          // Apply to source video (srcStartTime handles the "cut" part)
+          const sourceTime = (activeClip.srcStartTime || 0) + offset;
+          
+          // Only seek if we are significantly off (prevent stutter)
+          if (Math.abs(videoRef.current.currentTime - sourceTime) > 0.3) {
+              videoRef.current.currentTime = sourceTime;
+          }
+          
+          if (videoRef.current.paused && state.isPlaying) {
+              videoRef.current.play().catch(e => console.log("Play interrupted", e));
+          }
+          if (!videoRef.current.paused && !state.isPlaying) videoRef.current.pause();
+
+      } else {
+          // In a gap
+           if (!videoRef.current.paused) videoRef.current.pause();
+      }
+
+  }, [state.currentTime, state.layers, state.isPlaying]);
+
 
   // --- Actions ---
 
@@ -302,7 +358,9 @@ const App: React.FC = () => {
                 videoUrl: url,
                 duration: Math.max(prev.duration, videoElement.duration),
                 layers: [...prev.layers, {
-                    id: newId, type: 'video', track: 0, start: prev.currentTime, duration: videoElement.duration, label: file.name, src: url, speed: 1.0, transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
+                    id: newId, type: 'video', track: 0, start: prev.currentTime, duration: videoElement.duration, 
+                    srcStartTime: 0, // IMPORTANT: Initialize srcStartTime
+                    label: file.name, src: url, speed: 1.0, transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
                 }]
             }));
         };
@@ -338,8 +396,17 @@ const App: React.FC = () => {
           if (time <= layerToSplit.start || time >= (layerToSplit.start + layerToSplit.duration)) return prev;
 
           const splitRelative = time - layerToSplit.start;
-          const firstPart = { ...layerToSplit, duration: splitRelative };
-          const secondPart: VideoSegment = { ...layerToSplit, id: `${layerToSplit.id}-split-${Date.now()}`, start: time, duration: layerToSplit.duration - splitRelative };
+          const firstPart = { 
+              ...layerToSplit, 
+              duration: splitRelative 
+          };
+          const secondPart: VideoSegment = { 
+              ...layerToSplit, 
+              id: `${layerToSplit.id}-split-${Date.now()}`, 
+              start: time, 
+              duration: layerToSplit.duration - splitRelative,
+              srcStartTime: (layerToSplit.srcStartTime || 0) + splitRelative // Adjust source time for 2nd part
+          };
 
           return {
               ...prev,
@@ -378,16 +445,33 @@ const App: React.FC = () => {
               for (const call of result.toolCalls) {
                   if (call.name === 'auto_cut_video') {
                       if (state.file) {
-                        const pace = call.args?.pace || 'balanced';
+                        const mode = call.args?.mode || 'pace';
+                        const intensity = call.args?.intensity || 'medium';
+                        
                         try {
-                            const cuts = await analyzeVideoForCuts(state.file, state.duration, pace);
-                            // Populate source if missing from simulation
-                            const processedCuts = cuts.map(c => ({...c, src: state.videoUrl || '' }));
-                            // Replace current track 0 layers or append? Let's replace for "Auto-Cut"
+                            const cuts = await analyzeVideoForCuts(state.file, state.duration, mode, intensity);
+                            
+                            // Populate source details for the new segments
+                            const processedCuts = cuts.map(c => ({
+                                ...c, 
+                                src: state.videoUrl || '',
+                                // Ensure srcStartTime is set. If analysis didn't set it (legacy pace mode), simulate it.
+                                srcStartTime: c.srcStartTime !== undefined ? c.srcStartTime : c.start 
+                            }));
+                            
+                            // Replace current track 0 layers (Main Video Track)
                             newLayers = [...newLayers.filter(l => l.track !== 0), ...processedCuts];
-                            sysMsg = "Auto-Cut applied successfully.";
+                            
+                            // Adjust timeline duration if the cut version is shorter
+                            const newTotalDuration = processedCuts.reduce((acc, curr) => acc + curr.duration, 0);
+                            
+                            sysMsg = mode === 'remove_silence' 
+                                ? "Processed audio: Removed silence & breaths." 
+                                : "Auto-Cut: Stylistic pacing applied.";
+                                
                         } catch (e) {
-                            sysMsg = "Failed to auto-cut video. Check if API Key is set.";
+                            sysMsg = "Failed to analyze audio. Video might not have an audio track.";
+                            console.error(e);
                         }
                       } else {
                           sysMsg = "No video file loaded to cut.";
@@ -398,6 +482,7 @@ const App: React.FC = () => {
                       const styleConfig: any = { fontFamily: 'Inter', fontSize: 100, color: 'white' };
                       if (style === 'cyberpunk') { styleConfig.color = '#00ffcc'; styleConfig.textShadow = '0 0 10px #00ffcc'; styleConfig.fontFamily = 'Oswald'; }
                       if (style === 'luxury') { styleConfig.color = '#ffd700'; styleConfig.fontFamily = 'Playfair Display'; }
+                      if (style === 'bold') { styleConfig.fontFamily = 'Montserrat'; styleConfig.fontWeight = '900'; styleConfig.textTransform = 'uppercase'; }
 
                       newLayers.push({
                            id: newId, type: 'text', track: 2, start: state.currentTime, duration: 4, label: 'AI Graphic', content: text, speed: 1, 
@@ -412,6 +497,7 @@ const App: React.FC = () => {
                       if (mood === 'teal_orange') newFilters = { ...DEFAULT_FILTERS, temperature: -20, tint: -10, saturation: 120, contrast: 20 };
                       if (mood === 'matrix') newFilters = { ...DEFAULT_FILTERS, tint: -50, saturation: 80, contrast: 30 };
                       if (mood === 'warm') newFilters = { ...DEFAULT_FILTERS, temperature: 30, saturation: 110 };
+                      if (mood === 'clean') newFilters = { ...DEFAULT_FILTERS, saturation: 105, contrast: 10, sharpness: 20 };
                       sysMsg = `Applied ${mood} grading.`;
                   }
               }
@@ -635,6 +721,15 @@ const App: React.FC = () => {
     grayscale(${state.filters.saturation === 0 ? 100 : 0}%)
   `;
 
+  // DETERMINE IF VIDEO SHOULD BE VISIBLE
+  // Logic: Is there a video clip on Track 0 at current time?
+  const activeVideoClip = state.layers.find(l => 
+    l.track === 0 && 
+    l.type === 'video' && 
+    state.currentTime >= l.start && 
+    state.currentTime < (l.start + l.duration)
+  );
+
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-gray-200 overflow-hidden font-sans select-none">
         <input type="file" ref={projectInputRef} onChange={handleLoadProject} accept=".lumina,.json" className="hidden" />
@@ -707,10 +802,11 @@ const App: React.FC = () => {
                      <div className="flex-1 flex items-center justify-center overflow-hidden bg-black relative" ref={monitorRef}>
                         {state.videoUrl ? (
                             <div className="relative w-full h-full flex items-center justify-center">
+                                {/* MAIN VIDEO ELEMENT (Handles Track 0) */}
                                 <video 
                                     ref={videoRef}
                                     src={state.videoUrl}
-                                    className="max-w-full max-h-full pointer-events-none" // Disable Pointer events on video to allow Overlay clicks
+                                    className={`max-w-full max-h-full pointer-events-none transition-opacity duration-75 ${activeVideoClip ? 'opacity-100' : 'opacity-0'}`} 
                                     style={{ filter: filterStyle }}
                                 />
                                 <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
