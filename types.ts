@@ -14,7 +14,7 @@ export interface AnimationKeyframe {
   property: string; // Generic path like 'transform.scale' or 'filters.brightness'
   value: number;
   time: number; // relative to layer start (seconds)
-  easing: 'linear' | 'easeOut' | 'bezier';
+  easing: 'linear' | 'easeIn' | 'easeOut' | 'bezier';
 }
 
 export interface VideoEffect {

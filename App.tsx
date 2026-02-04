@@ -36,15 +36,61 @@ const App: React.FC = () => {
   const projectInputRef = useRef<HTMLInputElement>(null);
   const mediaImportRef = useRef<HTMLInputElement>(null);
 
+  // --- Helper: Keyframe Interpolation with Easing ---
+  const getInterpolatedValue = (layer: VideoSegment, propertyPath: string, defaultValue: number) => {
+      // Find keyframes for this specific property
+      const keyframes = layer.animations
+          .filter(k => k.property === propertyPath)
+          .sort((a, b) => a.time - b.time);
+
+      if (keyframes.length === 0) return defaultValue;
+
+      const localTime = state.currentTime - layer.start;
+
+      // 1. Before first keyframe
+      if (localTime <= keyframes[0].time) return keyframes[0].value;
+      
+      // 2. After last keyframe
+      if (localTime >= keyframes[keyframes.length - 1].time) return keyframes[keyframes.length - 1].value;
+
+      // 3. Between keyframes (Interpolate)
+      const nextIndex = keyframes.findIndex(k => k.time > localTime);
+      const nextKey = keyframes[nextIndex];
+      const prevKey = keyframes[nextIndex - 1];
+
+      const timeRange = nextKey.time - prevKey.time;
+      const timeProgress = localTime - prevKey.time;
+      let ratio = timeProgress / timeRange;
+
+      // --- APPLY EASING (Easy Ease) ---
+      const easingType = nextKey.easing || 'linear';
+      switch (easingType) {
+          case 'easeOut':
+              ratio = 1 - Math.pow(1 - ratio, 3); // Cubic Ease Out
+              break;
+          case 'easeIn':
+              ratio = ratio * ratio * ratio; // Cubic Ease In
+              break;
+          case 'bezier': // Simulating Ease In Out
+              ratio = ratio < 0.5 ? 4 * ratio * ratio * ratio : 1 - Math.pow(-2 * ratio + 2, 3) / 2;
+              break;
+          case 'linear':
+          default:
+              // ratio remains linear
+              break;
+      }
+
+      // Linear Interpolation (Lerp) with eased ratio
+      return prevKey.value + (nextKey.value - prevKey.value) * ratio;
+  };
+
   // --- Effects & Logic ---
 
   useEffect(() => {
     // Keyboard Shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
-        // Prevent shortcuts if typing in input
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-        // Save Shortcut (Ctrl+S)
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
             handleSaveProject();
@@ -60,9 +106,7 @@ const App: React.FC = () => {
             case 'r': setState(p => ({...p, activeTool: Tool.RATE_STRETCH})); break;
             case 'a': setState(p => ({...p, activeTool: Tool.TRACK_SELECT_FWD})); break;
             case 'delete': 
-                if (state.selectedLayerId) {
-                    handleDeleteLayer();
-                }
+                if (state.selectedLayerId) handleDeleteLayer();
                 break;
         }
     };
@@ -145,11 +189,8 @@ const App: React.FC = () => {
       if (!state.selectedLayerId) return;
       const layer = state.layers.find(l => l.id === state.selectedLayerId);
       if (!layer) return;
-
       const newName = prompt("Rename Clip", layer.label);
-      if (newName) {
-          updateLayer(layer.id, { label: newName });
-      }
+      if (newName) updateLayer(layer.id, { label: newName });
   };
 
   const handleDeleteLayer = (id?: string) => {
@@ -193,15 +234,9 @@ const App: React.FC = () => {
           setState(prev => {
               const layer = prev.layers.find(l => l.id === prev.selectedLayerId);
               if (!layer) return prev;
-
-              if (preset.targetType !== layer.type && preset.targetType !== 'video') { 
-                   if(preset.targetType === 'text' && layer.type !== 'text') return prev;
-              }
-
               const updatedLayer = { ...layer };
               if (preset.data.transform) updatedLayer.transform = { ...updatedLayer.transform, ...preset.data.transform };
               if (preset.data.style && layer.type === 'text') updatedLayer.style = { ...updatedLayer.style, ...preset.data.style };
-
               return {
                   ...prev,
                   layers: prev.layers.map(l => l.id === prev.selectedLayerId ? updatedLayer : l)
@@ -215,8 +250,6 @@ const App: React.FC = () => {
     if (!file) return;
     const url = URL.createObjectURL(file);
     const newId = `layer-${Date.now()}`;
-    
-    // Auto-detect type if coming from generic input
     const isImage = file.type.startsWith('image/');
     const finalType = isImage ? 'image' : 'video';
 
@@ -230,22 +263,7 @@ const App: React.FC = () => {
                 videoUrl: url,
                 duration: Math.max(prev.duration, videoElement.duration),
                 layers: [...prev.layers, {
-                    id: newId,
-                    type: 'video',
-                    track: 0,
-                    start: prev.currentTime,
-                    duration: videoElement.duration,
-                    label: file.name,
-                    src: url,
-                    speed: 1.0,
-                    transform: { ...DEFAULT_TRANSFORM },
-                    anchorPoint: { x: 0.5, y: 0.5 },
-                    opacity: 1,
-                    blendMode: 'normal',
-                    effects: [],
-                    animations: [],
-                    isActive: true,
-                    locked: false
+                    id: newId, type: 'video', track: 0, start: prev.currentTime, duration: videoElement.duration, label: file.name, src: url, speed: 1.0, transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
                 }]
             }));
         };
@@ -253,22 +271,7 @@ const App: React.FC = () => {
         setState(prev => ({
             ...prev,
             layers: [...prev.layers, {
-                id: newId,
-                type: 'image',
-                track: 1,
-                start: prev.currentTime,
-                duration: 5,
-                label: file.name,
-                src: url,
-                speed: 1.0,
-                transform: { ...DEFAULT_TRANSFORM },
-                anchorPoint: { x: 0.5, y: 0.5 },
-                opacity: 1,
-                blendMode: 'normal',
-                effects: [],
-                animations: [],
-                isActive: true,
-                locked: false
+                id: newId, type: 'image', track: 1, start: prev.currentTime, duration: 5, label: file.name, src: url, speed: 1.0, transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
             }],
             selectedLayerId: newId,
             activePanel: PanelType.EFFECT_CONTROLS
@@ -282,23 +285,7 @@ const App: React.FC = () => {
       setState(prev => ({
           ...prev,
           layers: [...prev.layers, {
-              id: newId,
-              type: 'text',
-              track: 2,
-              start: prev.currentTime,
-              duration: 5,
-              label: 'Text Layer',
-              content: 'Lumina Title',
-              speed: 1.0,
-              style: { fontFamily: 'Inter', fontSize: 80, color: '#ffffff', textShadow: '0 2px 4px rgba(0,0,0,0.5)' },
-              transform: { ...DEFAULT_TRANSFORM },
-              anchorPoint: { x: 0.5, y: 0.5 },
-              opacity: 1,
-              blendMode: 'normal',
-              effects: [],
-              animations: [],
-              isActive: true,
-              locked: false
+              id: newId, type: 'text', track: 2, start: prev.currentTime, duration: 5, label: 'Text Layer', content: 'Lumina Title', speed: 1.0, style: { fontFamily: 'Inter', fontSize: 80, color: '#ffffff', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }, transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
           }],
           selectedLayerId: newId,
           activePanel: PanelType.ESSENTIAL_GRAPHICS
@@ -312,18 +299,8 @@ const App: React.FC = () => {
           if (time <= layerToSplit.start || time >= (layerToSplit.start + layerToSplit.duration)) return prev;
 
           const splitRelative = time - layerToSplit.start;
-          
-          const firstPart = {
-              ...layerToSplit,
-              duration: splitRelative
-          };
-
-          const secondPart: VideoSegment = {
-              ...layerToSplit,
-              id: `${layerToSplit.id}-split-${Date.now()}`,
-              start: time,
-              duration: layerToSplit.duration - splitRelative,
-          };
+          const firstPart = { ...layerToSplit, duration: splitRelative };
+          const secondPart: VideoSegment = { ...layerToSplit, id: `${layerToSplit.id}-split-${Date.now()}`, start: time, duration: layerToSplit.duration - splitRelative };
 
           return {
               ...prev,
@@ -344,72 +321,97 @@ const App: React.FC = () => {
 
   const handleAIChat = async (msg: string) => {
       const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: Date.now() };
-      
-      setState(prev => ({
-          ...prev,
-          chatHistory: [...prev.chatHistory, userMsg],
-          isProcessing: true
-      }));
-
-      const historyForAI = [...state.chatHistory, userMsg];
-
+      setState(prev => ({ ...prev, chatHistory: [...prev.chatHistory, userMsg], isProcessing: true }));
       try {
-          const result = await chatWithAI(historyForAI, { filters: state.filters, duration: state.duration });
-          
-          const aiMsg: ChatMessage = {
-              role: 'assistant',
-              content: result.text,
-              timestamp: Date.now(),
-              sources: result.sources
-          };
-
-          setState(prev => ({
-              ...prev,
-              chatHistory: [...prev.chatHistory, aiMsg],
-              isProcessing: false
-          }));
+          const result = await chatWithAI([...state.chatHistory, userMsg], { filters: state.filters, duration: state.duration });
+          const aiMsg: ChatMessage = { role: 'assistant', content: result.text, timestamp: Date.now(), sources: result.sources };
+          setState(prev => ({ ...prev, chatHistory: [...prev.chatHistory, aiMsg], isProcessing: false }));
       } catch (e) {
           console.error(e);
           setState(prev => ({ ...prev, isProcessing: false }));
       }
   };
 
-  // --- PROGRAM MONITOR INTERACTION ---
+  // --- PROGRAM MONITOR INTERACTION (Fixed) ---
   
   const handleOverlayMouseDown = (e: React.MouseEvent, layer: VideoSegment, type: 'move' | 'resize') => {
-      e.stopPropagation();
-      e.preventDefault();
+      e.stopPropagation(); // Stop bubbling to container
       
-      // Select layer if not selected
       if(state.selectedLayerId !== layer.id) {
           setState(p => ({...p, selectedLayerId: layer.id, activePanel: PanelType.EFFECT_CONTROLS}));
       }
 
       const startX = e.clientX;
       const startY = e.clientY;
-      const initialTransform = { ...layer.transform };
+      
+      // Get current effective values (considering keyframes)
+      const currentScale = getInterpolatedValue(layer, 'transform.scale', layer.transform.scale);
+      const currentX = getInterpolatedValue(layer, 'transform.translateX', layer.transform.translateX);
+      const currentY = getInterpolatedValue(layer, 'transform.translateY', layer.transform.translateY);
+
+      const hasKeyframes = (prop: string) => layer.animations.some(k => k.property === prop);
 
       const handleMouseMove = (ev: MouseEvent) => {
+          ev.preventDefault();
           const deltaX = ev.clientX - startX;
           const deltaY = ev.clientY - startY;
 
+          // Helper to update value (keyframe or static)
+          const updateValue = (prop: string, newValue: number, staticUpdate: any) => {
+              if (hasKeyframes(prop)) {
+                  // If animating, update/add keyframe at current time
+                  const localTime = state.currentTime - layer.start;
+                  const newKeys = [...layer.animations.filter(k => k.property !== prop || Math.abs(k.time - localTime) > 0.05), {
+                      property: prop,
+                      time: localTime,
+                      value: newValue,
+                      easing: 'linear' as const
+                  }];
+                  updateLayer(layer.id, { animations: newKeys });
+              } else {
+                  updateLayer(layer.id, { transform: { ...layer.transform, ...staticUpdate } });
+              }
+          };
+
           if (type === 'move') {
-              updateLayer(layer.id, {
-                  transform: {
-                      ...initialTransform,
-                      translateX: initialTransform.translateX + deltaX,
-                      translateY: initialTransform.translateY + deltaY
-                  }
-              });
+              const newX = currentX + deltaX;
+              const newY = currentY + deltaY;
+              
+              if (hasKeyframes('transform.translateX') || hasKeyframes('transform.translateY')) {
+                  const localTime = state.currentTime - layer.start;
+                  // Complex: Need to update both independently if one is keyed
+                  const newKeys = layer.animations.filter(k => 
+                      !['transform.translateX', 'transform.translateY'].includes(k.property) || Math.abs(k.time - localTime) > 0.05
+                  );
+                  newKeys.push(
+                      { property: 'transform.translateX', time: localTime, value: newX, easing: 'linear' as const },
+                      { property: 'transform.translateY', time: localTime, value: newY, easing: 'linear' as const }
+                  );
+                  updateLayer(layer.id, { animations: newKeys });
+              } else {
+                   updateLayer(layer.id, {
+                      transform: { ...layer.transform, translateX: newX, translateY: newY }
+                  });
+              }
+
           } else if (type === 'resize') {
-              // Simple uniform scaling based on X movement magnitude
-              // Holding Shift keeps Aspect Ratio (implied in simple scaling here, actually)
-              // To make shift optional we would need independent scaleX/scaleY which our model simplifies to 'scale'
               const sensitivity = 0.5;
-              const newScale = Math.max(0, initialTransform.scale + (deltaX * sensitivity));
-              updateLayer(layer.id, {
-                  transform: { ...initialTransform, scale: newScale }
-              });
+              const newScale = Math.max(0, currentScale + (deltaX * sensitivity));
+              
+              if (hasKeyframes('transform.scale')) {
+                  const localTime = state.currentTime - layer.start;
+                  const newKeys = [...layer.animations.filter(k => k.property !== 'transform.scale' || Math.abs(k.time - localTime) > 0.05), {
+                      property: 'transform.scale',
+                      time: localTime,
+                      value: newScale,
+                      easing: 'linear' as const
+                  }];
+                  updateLayer(layer.id, { animations: newKeys });
+              } else {
+                   updateLayer(layer.id, {
+                      transform: { ...layer.transform, scale: newScale }
+                  });
+              }
           }
       };
 
@@ -422,36 +424,74 @@ const App: React.FC = () => {
       window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // --- Rendering Compositon ---
+  // --- Rendering Composition ---
   const renderOverlays = () => {
       return state.layers
         .filter(l => l.isActive && l.track > 0)
         .filter(l => state.currentTime >= l.start && state.currentTime <= (l.start + l.duration))
         .map(layer => {
-            const scale = layer.transform.scale / 100;
             const isSelected = state.selectedLayerId === layer.id;
             
+            // CALCULATE INTERPOLATED VALUES
+            const scale = getInterpolatedValue(layer, 'transform.scale', layer.transform.scale) / 100;
+            const x = getInterpolatedValue(layer, 'transform.translateX', layer.transform.translateX);
+            const y = getInterpolatedValue(layer, 'transform.translateY', layer.transform.translateY);
+            const rot = getInterpolatedValue(layer, 'transform.rotateZ', layer.transform.rotateZ);
+            const opacity = getInterpolatedValue(layer, 'opacity', layer.opacity);
+
+            // New Effects Properties
+            const skewX = getInterpolatedValue(layer, 'transform.skewX', 0);
+            const skewY = getInterpolatedValue(layer, 'transform.skewY', 0);
+            const blurAmount = getInterpolatedValue(layer, 'effects.blur', 0);
+            const wipeProgress = getInterpolatedValue(layer, 'effects.wipe', 0);
+            const textProgress = getInterpolatedValue(layer, 'text.progress', 100);
+
+            // Calculate Filters
+            let filterString = '';
+            if (blurAmount > 0) filterString += `blur(${blurAmount}px) `;
+
+            // Calculate Clip Path (Linear Wipe)
+            // Wipe from 0 to 100. 0 = Full Visible, 100 = Hidden (or vice versa depending on preset)
+            // Implementation: Wipe Left to Right
+            // inset(0 0 0 0) is visible. inset(0 100% 0 0) is hidden from right.
+            let clipPathString = '';
+            if (wipeProgress > 0) {
+                clipPathString = `inset(0 ${100 - wipeProgress}% 0 0)`;
+            }
+
             // Base style for content
             const style: React.CSSProperties = {
                 transform: `
-                    translate3d(${layer.transform.translateX}px, ${layer.transform.translateY}px, 0)
-                    rotateZ(${layer.transform.rotateZ}deg)
+                    translate3d(${x}px, ${y}px, 0)
+                    rotateZ(${rot}deg)
                     scale(${scale})
+                    skew(${skewX}deg, ${skewY}deg)
                 `,
-                opacity: layer.opacity,
+                opacity: opacity,
                 position: 'absolute',
                 top: '50%', left: '50%',
-                marginTop: '-50px', marginLeft: '-100px', // Center origin logic (simplified)
+                marginTop: '-50px', marginLeft: '-100px', // Center origin logic
                 mixBlendMode: layer.blendMode,
-                pointerEvents: 'auto', // Allow clicking
-                userSelect: 'none'
+                pointerEvents: 'auto', // Ensure it captures clicks
+                userSelect: 'none',
+                transformOrigin: '50% 50%',
+                filter: filterString,
+                clipPath: clipPathString,
+                transition: 'none' // We manually interpolate, disable CSS transitions to avoid conflicts
             };
 
             const Content = () => {
                 if (layer.type === 'image' && layer.src) {
-                    return <img src={layer.src} alt="" className="max-w-[400px] object-contain pointer-events-none" />;
+                    return <img src={layer.src} alt="" className="max-w-[400px] object-contain pointer-events-none select-none" draggable={false} />;
                 }
                 if (layer.type === 'text' && layer.content) {
+                    // Typewriter Effect Logic
+                    let displayContent = layer.content;
+                    if (textProgress < 100) {
+                        const len = Math.floor(layer.content.length * (textProgress / 100));
+                        displayContent = layer.content.substring(0, len);
+                    }
+
                     return (
                         <div style={{
                             fontFamily: layer.style?.fontFamily,
@@ -459,9 +499,14 @@ const App: React.FC = () => {
                             color: layer.style?.color,
                             textShadow: layer.style?.textShadow,
                             whiteSpace: 'nowrap',
-                            fontWeight: 700
+                            fontWeight: 700,
+                            cursor: 'move'
                         }}>
-                            {layer.content}
+                            {displayContent}
+                            {/* Cursor Blinker for Typewriter */}
+                            {textProgress < 100 && textProgress > 0 && (
+                                <span className="animate-pulse border-r-2 border-white ml-0.5 h-full inline-block align-middle">&nbsp;</span>
+                            )}
                         </div>
                     );
                 }
@@ -471,19 +516,19 @@ const App: React.FC = () => {
             return (
                 <div key={layer.id} style={style} 
                      onMouseDown={(e) => handleOverlayMouseDown(e, layer, 'move')}
-                     className={`cursor-move group ${isSelected ? 'z-50' : 'z-10'}`}>
+                     className={`group ${isSelected ? 'z-50' : 'z-10'}`}>
                     
                     <Content />
 
                     {/* Transform Controls (Gizmo) */}
                     {isSelected && (
                         <div className="absolute -inset-2 border-2 border-blue-500 pointer-events-none">
-                            {/* Resize Handles */}
+                            {/* Resize Handle - Bottom Right */}
                             <div 
-                                className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-500 border border-white cursor-nwse-resize pointer-events-auto"
+                                className="absolute -bottom-1.5 -right-1.5 w-4 h-4 bg-blue-500 border-2 border-white cursor-nwse-resize pointer-events-auto"
                                 onMouseDown={(e) => handleOverlayMouseDown(e, layer, 'resize')}
                             />
-                            {/* Visual Corners */}
+                            {/* Visual Corners (Visual Only) */}
                             <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-blue-500 border border-white"/>
                             <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-blue-500 border border-white"/>
                             <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-blue-500 border border-white"/>
@@ -505,50 +550,27 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-gray-200 overflow-hidden font-sans select-none">
-        {/* Hidden Inputs */}
-        <input 
-            type="file" 
-            ref={projectInputRef} 
-            onChange={handleLoadProject} 
-            accept=".lumina,.json" 
-            className="hidden" 
-        />
-        <input 
-            type="file"
-            ref={mediaImportRef}
-            onChange={(e) => handleImport(e)}
-            accept="video/*,image/*"
-            className="hidden"
-        />
+        <input type="file" ref={projectInputRef} onChange={handleLoadProject} accept=".lumina,.json" className="hidden" />
+        <input type="file" ref={mediaImportRef} onChange={(e) => handleImport(e)} accept="video/*,image/*" className="hidden" />
 
-        {/* Export Modal */}
         {state.showExportModal && (
-            <ExportModal 
-                onClose={() => setState(p => ({...p, showExportModal: false}))} 
-                onExport={() => { alert('Rendering Sequence...'); setState(p => ({...p, showExportModal: false})); }}
-            />
+            <ExportModal onClose={() => setState(p => ({...p, showExportModal: false}))} onExport={() => { alert('Rendering Sequence...'); setState(p => ({...p, showExportModal: false})); }} />
         )}
 
-        {/* Header / Menu Bar */}
         <TopMenu 
             onImport={() => mediaImportRef.current?.click()}
             onSave={handleSaveProject}
             onOpen={() => projectInputRef.current?.click()}
             onExport={() => setState(p => ({...p, showExportModal: true}))}
-            onUndo={() => console.log('Undo not implemented')}
-            onRedo={() => console.log('Redo not implemented')}
+            onUndo={() => {}} onRedo={() => {}}
             onDelete={() => handleDeleteLayer()}
             onRenameLayer={handleRenameLayer}
             activePanel={state.activePanel}
             setActivePanel={(p) => setState(s => ({...s, activePanel: p}))}
         />
 
-        {/* Workspace Grid */}
         <div className="flex-1 flex min-h-0">
-            
-            {/* Left Column (Source / Panels) */}
             <div className="w-[35%] flex flex-col border-r border-[#121212]">
-                {/* Top Left: Source Monitor (Placeholder) / Effect Controls */}
                 <div className="h-[50%] bg-[#1e1e1e] border-b border-[#121212] flex flex-col">
                     <Sidebar 
                         activePanel={state.activePanel} 
@@ -563,10 +585,9 @@ const App: React.FC = () => {
                         onAddText={handleAddText}
                         layers={state.layers}
                         onApplyPreset={handleApplyPreset}
+                        currentTime={state.currentTime}
                     />
                 </div>
-
-                {/* Bottom Left: Project Assets */}
                 <div className="flex-1 bg-[#1e1e1e] p-2 overflow-y-auto">
                     <div className="text-[11px] text-gray-400 font-bold mb-2 flex justify-between">
                          <span>Project: Media Browser</span>
@@ -582,12 +603,8 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            {/* Right Column (Program / Timeline) */}
             <div className="flex-1 flex flex-col min-w-0">
-                
-                {/* Top Right: Program Monitor */}
                 <div className="h-[55%] bg-[#0a0a0a] border-b border-[#121212] flex flex-col relative group">
-                     {/* Safe Margins Overlay */}
                      <div className="absolute inset-8 border border-white/10 pointer-events-none z-10"></div>
                      <div className="absolute inset-16 border border-white/10 pointer-events-none z-10"></div>
 
@@ -597,7 +614,7 @@ const App: React.FC = () => {
                                 <video 
                                     ref={videoRef}
                                     src={state.videoUrl}
-                                    className="max-w-full max-h-full"
+                                    className="max-w-full max-h-full pointer-events-none" // Disable Pointer events on video to allow Overlay clicks
                                     style={{ filter: filterStyle }}
                                 />
                                 <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
@@ -612,7 +629,6 @@ const App: React.FC = () => {
                         )}
                      </div>
 
-                     {/* Transport Controls */}
                      <div className="h-10 bg-[#1e1e1e] flex items-center justify-between px-4 border-t border-[#2a2a2a]">
                          <div className="text-blue-400 font-mono text-sm">{state.currentTime.toFixed(2)}</div>
                          <div className="flex gap-4 text-gray-400">
@@ -628,15 +644,12 @@ const App: React.FC = () => {
                      </div>
                 </div>
 
-                {/* Bottom Right: Timeline */}
                 <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
-                     {/* Timeline Tools Stripe */}
                      <div className="h-8 bg-[#232323] border-b border-[#121212] flex items-center px-2 text-[10px] gap-2 text-gray-400">
                          <span className="text-blue-400 font-bold">Sequence 01</span>
                          <span className="w-px h-4 bg-gray-700 mx-2"></span>
                          <span>{state.activeTool}</span>
                      </div>
-                     
                      <div className="flex-1 flex overflow-hidden">
                         <ToolsBar activeTool={state.activeTool} setTool={(t) => setState(s => ({...s, activeTool: t}))} />
                         <Timeline 

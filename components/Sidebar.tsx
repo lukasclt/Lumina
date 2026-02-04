@@ -3,7 +3,8 @@ import {
     Sparkles, Type, MessageSquare, Box, Layers, Settings, 
     Palette, User, Bot, Send, Link as LinkIcon, 
     Clock, Search, FolderOpen, Film, Image as ImageIcon,
-    SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2, FileBox, File
+    SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2, FileBox, File,
+    Diamond, StopCircle, MoveRight, Expand, AlignLeft, ScanLine
 } from 'lucide-react';
 import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage, PRESETS, LuminaPreset } from '../types';
 
@@ -20,11 +21,12 @@ interface SidebarProps {
   onAddText: () => void;
   layers: VideoSegment[];
   onApplyPreset: (preset: LuminaPreset) => void;
+  currentTime: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activePanel, setActivePanel, filters, setFilters, 
-  selectedLayer, updateLayer, onAIChat, isProcessing, chatHistory, onAddText, layers, onApplyPreset
+  selectedLayer, updateLayer, onAIChat, isProcessing, chatHistory, onAddText, layers, onApplyPreset, currentTime
 }) => {
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -47,12 +49,124 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setFilters({ ...filters, [key]: value });
   };
 
-  const handleTransformChange = (key: keyof Transform3D, value: number) => {
-    if (!selectedLayer) return;
-    updateLayer(selectedLayer.id, {
-      transform: { ...selectedLayer.transform, [key]: value }
-    });
+  // --- MOTION GRAPHICS LOGIC ---
+
+  const getPropertyValue = (layer: VideoSegment, prop: string, defaultVal: number): number => {
+      // Logic for sidebar display (show interpolated value or static value)
+      const localTime = currentTime - layer.start;
+      const keyframes = layer.animations.filter(k => k.property === prop).sort((a,b) => a.time - b.time);
+      
+      if (keyframes.length === 0) return defaultVal;
+      
+      // Interpolate for display
+       if (localTime <= keyframes[0].time) return keyframes[0].value;
+       if (localTime >= keyframes[keyframes.length - 1].time) return keyframes[keyframes.length - 1].value;
+       const nextIndex = keyframes.findIndex(k => k.time > localTime);
+       const nextKey = keyframes[nextIndex];
+       const prevKey = keyframes[nextIndex - 1];
+       const ratio = (localTime - prevKey.time) / (nextKey.time - prevKey.time);
+       return prevKey.value + (nextKey.value - prevKey.value) * ratio;
   };
+
+  const handlePropertyChange = (propPath: string, value: number, staticUpdate: any) => {
+    if (!selectedLayer) return;
+
+    const hasKeyframes = selectedLayer.animations.some(k => k.property === propPath);
+
+    if (hasKeyframes) {
+        // Add or Update Keyframe
+        const localTime = currentTime - selectedLayer.start;
+        // Remove existing keyframe at nearly the same time to replace it
+        const newAnimations = selectedLayer.animations.filter(k => k.property !== propPath || Math.abs(k.time - localTime) > 0.05);
+        
+        newAnimations.push({
+            property: propPath,
+            time: localTime,
+            value: value,
+            easing: 'linear' as const
+        });
+        
+        updateLayer(selectedLayer.id, { animations: newAnimations });
+    } else {
+        // Update Static Value
+        updateLayer(selectedLayer.id, staticUpdate);
+    }
+  };
+
+  const toggleAnimation = (propPath: string, currentValue: number) => {
+      if (!selectedLayer) return;
+      const hasKeyframes = selectedLayer.animations.some(k => k.property === propPath);
+
+      if (hasKeyframes) {
+          // Turn OFF animation -> Clear keyframes
+          const newAnimations = selectedLayer.animations.filter(k => k.property !== propPath);
+          updateLayer(selectedLayer.id, { animations: newAnimations });
+      } else {
+          // Turn ON animation -> Add initial keyframe
+          const localTime = currentTime - selectedLayer.start;
+          const newAnimations = [...selectedLayer.animations, {
+              property: propPath,
+              time: localTime,
+              value: currentValue,
+              easing: 'linear' as const
+          }];
+          updateLayer(selectedLayer.id, { animations: newAnimations });
+      }
+  };
+
+  const addKeyframe = (propPath: string, currentValue: number) => {
+      if (!selectedLayer) return;
+      const localTime = currentTime - selectedLayer.start;
+      // Replace or Add
+      const newAnimations = selectedLayer.animations.filter(k => k.property !== propPath || Math.abs(k.time - localTime) > 0.05);
+      newAnimations.push({
+          property: propPath,
+          time: localTime,
+          value: currentValue,
+          easing: 'linear' as const
+      });
+      updateLayer(selectedLayer.id, { animations: newAnimations });
+  };
+
+  // --- AUTOMATED PRESETS (Motion Graphics) ---
+  const applyMotionPreset = (type: 'zoomIn' | 'slideIn' | 'typewriter' | 'wipe' | 'twist') => {
+      if (!selectedLayer) return;
+      
+      const startTime = currentTime - selectedLayer.start;
+      const duration = 0.8; // Default transition duration (seconds)
+      const endTime = startTime + duration;
+
+      let newKeys = [...selectedLayer.animations];
+
+      // Helper to add a pair of keys
+      const addKeys = (prop: string, startVal: number, endVal: number) => {
+          // Remove existing keys in this range for this prop to avoid conflicts
+           newKeys = newKeys.filter(k => k.property !== prop);
+           newKeys.push({ property: prop, time: startTime, value: startVal, easing: 'bezier' });
+           newKeys.push({ property: prop, time: endTime, value: endVal, easing: 'bezier' });
+      };
+
+      if (type === 'zoomIn') {
+          addKeys('transform.scale', 0, 100);
+          addKeys('opacity', 0, 1);
+      } else if (type === 'slideIn') {
+          addKeys('transform.translateY', 100, 0);
+          addKeys('opacity', 0, 1);
+      } else if (type === 'typewriter') {
+          addKeys('text.progress', 0, 100);
+      } else if (type === 'wipe') {
+          // Linear Wipe: 0 to 100% visible
+          addKeys('effects.wipe', 0, 100);
+      } else if (type === 'twist') {
+          addKeys('transform.skewX', 45, 0);
+          addKeys('transform.scale', 80, 100);
+          addKeys('effects.blur', 10, 0); // Motion Blur sim
+          addKeys('opacity', 0, 1);
+      }
+
+      updateLayer(selectedLayer.id, { animations: newKeys });
+  };
+
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,22 +179,55 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setExpandedFolders(prev => ({...prev, [id]: !prev[id]}));
   };
 
-  const renderPropertyRow = (label: string, value: number, onChange: (v: number) => void, min: number, max: number, unit = '') => (
-      <div className="flex items-center justify-between group py-1 border-b border-[#2a2a2a]/50">
-          <div className="flex items-center gap-2">
-             <Clock className="w-3 h-3 text-gray-600 hover:text-blue-500 cursor-pointer" />
-             <span className="text-gray-400 group-hover:text-white cursor-ew-resize select-none text-[11px]">{label}</span>
-          </div>
-          <div className="flex items-center gap-2">
-             <input 
-                type="range" min={min} max={max} value={value} 
-                onChange={(e) => onChange(Number(e.target.value))}
-                className="w-16 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"
-             />
-             <span className="text-blue-400 w-10 text-right text-[11px] font-mono">{value.toFixed(0)}{unit}</span>
-          </div>
-      </div>
-  );
+  const renderPropertyRow = (
+      label: string, 
+      value: number, 
+      onChange: (v: number) => void, 
+      min: number, 
+      max: number, 
+      unit = '', 
+      propPath?: string // 'transform.scale', etc.
+  ) => {
+      const isAnimating = propPath && selectedLayer?.animations.some(k => k.property === propPath);
+      
+      return (
+        <div className="flex items-center justify-between group py-1 border-b border-[#2a2a2a]/50">
+            <div className="flex items-center gap-2">
+                {propPath ? (
+                    <button 
+                        onClick={() => toggleAnimation(propPath, value)}
+                        className={`hover:text-blue-400 transition-colors ${isAnimating ? 'text-blue-500' : 'text-gray-600'}`}
+                        title="Toggle Animation"
+                    >
+                        <Clock className="w-3 h-3" />
+                    </button>
+                ) : (
+                    <Clock className="w-3 h-3 text-gray-800 cursor-default" />
+                )}
+                <span className="text-gray-400 group-hover:text-white cursor-ew-resize select-none text-[11px] w-16 truncate">{label}</span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+                {isAnimating && (
+                    <button onClick={() => addKeyframe(propPath!, value)} className="text-gray-500 hover:text-white" title="Add/Remove Keyframe">
+                        <Diamond className="w-2.5 h-2.5 fill-current"/>
+                    </button>
+                )}
+                
+                <input 
+                    type="range" min={min} max={max} value={value} 
+                    onChange={(e) => onChange(Number(e.target.value))}
+                    className="w-16 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                />
+                <div className="w-10 text-right">
+                    <span className="text-blue-400 text-[11px] font-mono cursor-pointer hover:bg-[#333] px-1 rounded">
+                        {value.toFixed(0)}{unit}
+                    </span>
+                </div>
+            </div>
+        </div>
+      );
+  };
 
   return (
     <div className="w-full h-full bg-[#1e1e1e] flex flex-col text-xs font-sans">
@@ -299,7 +446,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
              </div>
         )}
 
-        {/* --- EFFECT CONTROLS --- */}
+        {/* --- EFFECT CONTROLS (Updated for Keyframes) --- */}
         {activePanel === PanelType.EFFECT_CONTROLS && (
           <div className="p-0">
              {!selectedLayer ? (
@@ -320,11 +467,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             <span className="font-bold text-gray-300">Motion</span>
                         </div>
                         <div className="p-3 space-y-1">
-                            {renderPropertyRow("Position X", selectedLayer.transform.translateX, (v) => handleTransformChange('translateX', v), -960, 960)}
-                            {renderPropertyRow("Position Y", selectedLayer.transform.translateY, (v) => handleTransformChange('translateY', v), -540, 540)}
-                            {renderPropertyRow("Scale", selectedLayer.transform.scale, (v) => handleTransformChange('scale', v), 0, 500, '%')}
-                            {renderPropertyRow("Rotation", selectedLayer.transform.rotateZ, (v) => handleTransformChange('rotateZ', v), -360, 360, '°')}
-                            {renderPropertyRow("Opacity", selectedLayer.opacity * 100, (v) => updateLayer(selectedLayer.id, { opacity: v/100 }), 0, 100, '%')}
+                            {renderPropertyRow(
+                                "Position X", 
+                                getPropertyValue(selectedLayer, 'transform.translateX', selectedLayer.transform.translateX), 
+                                (v) => handlePropertyChange('transform.translateX', v, { translateX: v }), -960, 960, '', 'transform.translateX'
+                            )}
+                            {renderPropertyRow(
+                                "Position Y", 
+                                getPropertyValue(selectedLayer, 'transform.translateY', selectedLayer.transform.translateY), 
+                                (v) => handlePropertyChange('transform.translateY', v, { translateY: v }), -540, 540, '', 'transform.translateY'
+                            )}
+                            {renderPropertyRow(
+                                "Scale", 
+                                getPropertyValue(selectedLayer, 'transform.scale', selectedLayer.transform.scale), 
+                                (v) => handlePropertyChange('transform.scale', v, { scale: v }), 0, 500, '%', 'transform.scale'
+                            )}
+                            {renderPropertyRow(
+                                "Rotation", 
+                                getPropertyValue(selectedLayer, 'transform.rotateZ', selectedLayer.transform.rotateZ), 
+                                (v) => handlePropertyChange('transform.rotateZ', v, { rotateZ: v }), -360, 360, '°', 'transform.rotateZ'
+                            )}
+                            {renderPropertyRow(
+                                "Opacity", 
+                                getPropertyValue(selectedLayer, 'opacity', selectedLayer.opacity) * 100, 
+                                (v) => handlePropertyChange('opacity', v/100, { opacity: v/100 }), 0, 100, '%', 'opacity'
+                            )}
+                             {/* New Advanced Props */}
+                             {renderPropertyRow(
+                                "Blur", 
+                                getPropertyValue(selectedLayer, 'effects.blur', 0), 
+                                (v) => handlePropertyChange('effects.blur', v, {}), 0, 50, 'px', 'effects.blur'
+                            )}
+                             {renderPropertyRow(
+                                "Linear Wipe", 
+                                getPropertyValue(selectedLayer, 'effects.wipe', 0), 
+                                (v) => handlePropertyChange('effects.wipe', v, {}), 0, 100, '%', 'effects.wipe'
+                            )}
                         </div>
                     </div>
 
@@ -396,6 +574,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
              {selectedLayer && selectedLayer.type === 'text' && selectedLayer.style && (
                 <div className="space-y-4">
+                    {/* Motion Presets UI */}
+                    <div className="bg-[#232323] p-2 rounded border border-[#333]">
+                        <span className="block text-gray-400 font-bold mb-2 text-[10px] uppercase">Motion Presets</span>
+                        <div className="grid grid-cols-3 gap-2">
+                             <button onClick={() => applyMotionPreset('typewriter')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <AlignLeft className="w-4 h-4 text-blue-400"/>
+                                <span className="text-[9px] text-gray-300">Typewriter</span>
+                             </button>
+                             <button onClick={() => applyMotionPreset('zoomIn')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <Expand className="w-4 h-4 text-green-400"/>
+                                <span className="text-[9px] text-gray-300">Zoom In</span>
+                             </button>
+                             <button onClick={() => applyMotionPreset('slideIn')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <MoveRight className="w-4 h-4 text-purple-400"/>
+                                <span className="text-[9px] text-gray-300">Slide Up</span>
+                             </button>
+                             <button onClick={() => applyMotionPreset('wipe')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <ScanLine className="w-4 h-4 text-yellow-400"/>
+                                <span className="text-[9px] text-gray-300">Lin. Wipe</span>
+                             </button>
+                             <button onClick={() => applyMotionPreset('twist')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <Wand2 className="w-4 h-4 text-pink-400"/>
+                                <span className="text-[9px] text-gray-300">Twist</span>
+                             </button>
+                        </div>
+                    </div>
+
                     <div>
                         <label className="block text-gray-500 mb-1">Font Family</label>
                         <select 

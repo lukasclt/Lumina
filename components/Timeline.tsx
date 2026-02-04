@@ -58,6 +58,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   };
 
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only seek if clicking empty space or ruler, not if dragging or using tools that need specific targets
+    if (draggingId) return;
     if (activeTool !== Tool.SELECTION && activeTool !== Tool.RAZOR) return;
     
     const rect = e.currentTarget.getBoundingClientRect();
@@ -82,6 +84,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   // --- DRAG AND DROP LOGIC ---
   const handleMouseDown = (e: React.MouseEvent, layer: VideoSegment) => {
       e.stopPropagation();
+      e.preventDefault(); // Prevent text selection
       
       // Razor Tool Logic
       if (activeTool === Tool.RAZOR) {
@@ -107,7 +110,6 @@ export const Timeline: React.FC<TimelineProps> = ({
           const originalTrack = layer.track;
           const trackHeight = 64; // Height of one track in pixels (h-16 = 4rem = 64px)
 
-          // If Alt is pressed, we define we are duplicating
           const isDuplicating = e.altKey;
           let hasDuplicated = false;
 
@@ -131,20 +133,18 @@ export const Timeline: React.FC<TimelineProps> = ({
               }
 
               // Calculate Track Shift
-              // Negative deltaY means moving UP (higher track index in our visual array logic)
-              // But visual array is [2, 1, 0]. DOM is stacked top to bottom.
-              // Moving UP visually means decreasing Y, which corresponds to Increasing Track Index in our render loop?
-              // Wait, V3 is top. V1 is bottom. 
-              // If I drag Up (negative Y), I want to go from V1(0) to V2(1).
+              // visual array is [2, 1, 0]. 
+              // DeltaY + means going down visually (Index decreasing)
+              // DeltaY - means going up visually (Index increasing)
+              // Since tracks are rendered Top to Bottom:
+              // V3 (index 2) is at top. V1 (index 0) is at bottom.
+              // Dragging UP (-Y) should INCREASE index.
               const trackShift = Math.round(-deltaY / trackHeight);
               let newTrack = Math.max(0, Math.min(2, originalTrack + trackShift));
 
               if (isDuplicating && !hasDuplicated && (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5)) {
                   onDuplicateLayer(layer.id, newTime, newTrack);
-                  hasDuplicated = true; // Prevent multiple dupes in one drag
-                  // End this drag session essentially for the original, but in reality we'd switch focus.
-                  // For simplicity in this implementation, we just stop dragging the original to avoid conflict
-                  // Or we update the Original if not duplicating
+                  hasDuplicated = true; 
               }
               
               if (!isDuplicating) {
