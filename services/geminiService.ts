@@ -1,14 +1,12 @@
 import { GoogleGenAI, FunctionDeclaration, Type, Tool } from "@google/genai";
 import { VideoSegment, VideoFilter, ChatMessage } from "../types";
 
-const API_KEY = "AIzaSyDbCcx-S34kH88fOFdPy8x4yU-PK8cGQvs";
-
 let aiInstance: GoogleGenAI | null = null;
 
 const getAI = () => {
     if (aiInstance) return aiInstance;
     try {
-        aiInstance = new GoogleGenAI({ apiKey: API_KEY });
+        aiInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
     } catch (e) {
         console.error("Failed to initialize GoogleGenAI", e);
         return null;

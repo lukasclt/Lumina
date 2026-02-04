@@ -68,6 +68,27 @@ export interface VideoFilter {
   vignette: number;
 }
 
+export interface LuminaPreset {
+    id: string;
+    name: string;
+    category: 'Color' | 'Motion' | 'Audio';
+    targetType: 'video' | 'text' | 'image' | 'global'; 
+    data: {
+        filters?: Partial<VideoFilter>;
+        transform?: Partial<Transform3D>;
+        style?: any;
+    }
+}
+
+export interface ProjectFile {
+    version: string;
+    name: string;
+    date: string;
+    duration: number;
+    filters: VideoFilter;
+    layers: VideoSegment[];
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -147,4 +168,34 @@ export const DEFAULT_FILTERS: VideoFilter = {
 
 export const GOOGLE_FONTS = [
   'Inter', 'Roboto', 'Oswald', 'Lato', 'Poppins', 'Montserrat', 'Playfair Display'
+];
+
+export const PRESETS: LuminaPreset[] = [
+    {
+        id: 'p-cinematic',
+        name: 'Cinematic Teal & Orange',
+        category: 'Color',
+        targetType: 'global',
+        data: {
+            filters: { temperature: -10, tint: -5, saturation: 120, contrast: 20, highlights: -10, shadows: 5 }
+        }
+    },
+    {
+        id: 'p-noir',
+        name: 'Film Noir B&W',
+        category: 'Color',
+        targetType: 'global',
+        data: {
+            filters: { saturation: 0, contrast: 40, exposure: -0.5, vignette: 40, sharpness: 20 }
+        }
+    },
+    {
+        id: 'p-text-pop',
+        name: 'Text: Smooth Pop In',
+        category: 'Motion',
+        targetType: 'text',
+        data: {
+            transform: { scale: 120 } // In a real engine this would be keyframes
+        }
+    }
 ];

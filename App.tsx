@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Pause, Download, Settings, FileImage, FileVideo, Video, Maximize2, Monitor } from 'lucide-react';
+import { Upload, Play, Pause, Maximize2, Monitor } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { ToolsBar } from './components/ToolsBar';
 import { ExportModal } from './components/ExportModal';
-import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe } from './types';
+import { TopMenu } from './components/TopMenu';
+import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe, ProjectFile, LuminaPreset } from './types';
 import { chatWithAI, analyzeVideoForCuts } from './services/geminiService';
 
 const App: React.FC = () => {
@@ -30,7 +31,9 @@ const App: React.FC = () => {
   });
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
+  const mediaImportRef = useRef<HTMLInputElement>(null);
 
   // --- Effects & Logic ---
 
@@ -39,6 +42,13 @@ const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
         // Prevent shortcuts if typing in input
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+        // Save Shortcut (Ctrl+S)
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            handleSaveProject();
+            return;
+        }
 
         switch(e.key.toLowerCase()) {
             case ' ': e.preventDefault(); togglePlay(); break;
@@ -50,14 +60,14 @@ const App: React.FC = () => {
             case 'a': setState(p => ({...p, activeTool: Tool.TRACK_SELECT_FWD})); break;
             case 'delete': 
                 if (state.selectedLayerId) {
-                    setState(p => ({...p, layers: p.layers.filter(l => l.id !== p.selectedLayerId), selectedLayerId: null}));
+                    handleDeleteLayer();
                 }
                 break;
         }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state.selectedLayerId]);
+  }, [state.selectedLayerId, state.layers, state.filters]);
 
   const updateTime = () => {
     if (videoRef.current) {
@@ -79,13 +89,115 @@ const App: React.FC = () => {
     return () => { if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current); };
   }, [state.isPlaying]);
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>, type: 'video' | 'image') => {
+  // --- Actions ---
+
+  const handleSaveProject = () => {
+      const projectData: ProjectFile = {
+          version: "1.0.0",
+          name: "Lumina Sequence 01",
+          date: new Date().toISOString(),
+          duration: state.duration,
+          filters: state.filters,
+          layers: state.layers
+      };
+
+      const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `lumina_project_${Date.now()}.lumina`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
+  const handleLoadProject = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+          try {
+              const projectData: ProjectFile = JSON.parse(event.target?.result as string);
+              if (!projectData.layers || !projectData.version) throw new Error("Invalid Project File");
+
+              setState(prev => ({
+                  ...prev,
+                  duration: projectData.duration || prev.duration,
+                  filters: projectData.filters || DEFAULT_FILTERS,
+                  layers: projectData.layers.map(l => ({...l, isActive: true})),
+                  selectedLayerId: null,
+                  activePanel: PanelType.PROJECT
+              }));
+              alert("Project Loaded Successfully!");
+          } catch (err) {
+              console.error(err);
+              alert("Failed to load project file.");
+          }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+  };
+
+  const handleRenameLayer = () => {
+      if (!state.selectedLayerId) return;
+      const layer = state.layers.find(l => l.id === state.selectedLayerId);
+      if (!layer) return;
+
+      const newName = prompt("Rename Clip", layer.label);
+      if (newName) {
+          updateLayer(layer.id, { label: newName });
+      }
+  };
+
+  const handleDeleteLayer = () => {
+      if (state.selectedLayerId) {
+          setState(p => ({...p, layers: p.layers.filter(l => l.id !== p.selectedLayerId), selectedLayerId: null}));
+      }
+  };
+
+  const handleApplyPreset = (preset: LuminaPreset) => {
+      if (preset.targetType === 'global') {
+          if (preset.data.filters) {
+              setState(p => ({ ...p, filters: { ...p.filters, ...preset.data.filters } }));
+          }
+      } else {
+          if (!state.selectedLayerId) {
+              alert("Please select a layer to apply this preset.");
+              return;
+          }
+          setState(prev => {
+              const layer = prev.layers.find(l => l.id === prev.selectedLayerId);
+              if (!layer) return prev;
+
+              if (preset.targetType !== layer.type && preset.targetType !== 'video') { 
+                   if(preset.targetType === 'text' && layer.type !== 'text') return prev;
+              }
+
+              const updatedLayer = { ...layer };
+              if (preset.data.transform) updatedLayer.transform = { ...updatedLayer.transform, ...preset.data.transform };
+              if (preset.data.style && layer.type === 'text') updatedLayer.style = { ...updatedLayer.style, ...preset.data.style };
+
+              return {
+                  ...prev,
+                  layers: prev.layers.map(l => l.id === prev.selectedLayerId ? updatedLayer : l)
+              };
+          });
+      }
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>, type: 'video' | 'image' = 'video') => {
     const file = e.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
     const newId = `layer-${Date.now()}`;
+    
+    // Auto-detect type if coming from generic input
+    const isImage = file.type.startsWith('image/');
+    const finalType = isImage ? 'image' : 'video';
 
-    if (type === 'video') {
+    if (finalType === 'video') {
         const videoElement = document.createElement('video');
         videoElement.src = url;
         videoElement.onloadedmetadata = () => {
@@ -139,6 +251,7 @@ const App: React.FC = () => {
             activePanel: PanelType.EFFECT_CONTROLS
         }));
     }
+    e.target.value = '';
   };
 
   const handleAddText = () => {
@@ -173,31 +286,26 @@ const App: React.FC = () => {
       setState(prev => {
           const layerToSplit = prev.layers.find(l => l.id === layerId);
           if (!layerToSplit) return prev;
-          
-          // Check if time is within layer bounds
           if (time <= layerToSplit.start || time >= (layerToSplit.start + layerToSplit.duration)) return prev;
 
           const splitRelative = time - layerToSplit.start;
           
-          // 1. Update First Part (keep ID, update duration)
           const firstPart = {
               ...layerToSplit,
               duration: splitRelative
           };
 
-          // 2. Create Second Part
           const secondPart: VideoSegment = {
               ...layerToSplit,
               id: `${layerToSplit.id}-split-${Date.now()}`,
               start: time,
               duration: layerToSplit.duration - splitRelative,
-              // If it were a real video engine, we would adjust internal 'offset' here
           };
 
           return {
               ...prev,
               layers: prev.layers.map(l => l.id === layerId ? firstPart : l).concat(secondPart),
-              selectedLayerId: secondPart.id // Select the new part
+              selectedLayerId: secondPart.id
           };
       });
   };
@@ -211,10 +319,42 @@ const App: React.FC = () => {
       }));
   };
 
+  const handleAIChat = async (msg: string) => {
+      const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: Date.now() };
+      
+      setState(prev => ({
+          ...prev,
+          chatHistory: [...prev.chatHistory, userMsg],
+          isProcessing: true
+      }));
+
+      const historyForAI = [...state.chatHistory, userMsg];
+
+      try {
+          const result = await chatWithAI(historyForAI, { filters: state.filters, duration: state.duration });
+          
+          const aiMsg: ChatMessage = {
+              role: 'assistant',
+              content: result.text,
+              timestamp: Date.now(),
+              sources: result.sources
+          };
+
+          setState(prev => ({
+              ...prev,
+              chatHistory: [...prev.chatHistory, aiMsg],
+              isProcessing: false
+          }));
+      } catch (e) {
+          console.error(e);
+          setState(prev => ({ ...prev, isProcessing: false }));
+      }
+  };
+
   // --- Rendering Compositon ---
   const renderOverlays = () => {
       return state.layers
-        .filter(l => l.isActive && l.track > 0) // Track 0 is usually main video (handled by video tag)
+        .filter(l => l.isActive && l.track > 0)
         .filter(l => state.currentTime >= l.start && state.currentTime <= (l.start + l.duration))
         .map(layer => {
             const scale = layer.transform.scale / 100;
@@ -227,7 +367,7 @@ const App: React.FC = () => {
                 opacity: layer.opacity,
                 position: 'absolute',
                 top: '50%', left: '50%',
-                marginTop: '-50px', marginLeft: '-100px', // Naive centering for demo
+                marginTop: '-50px', marginLeft: '-100px',
                 mixBlendMode: layer.blendMode,
                 pointerEvents: 'none',
             };
@@ -254,7 +394,6 @@ const App: React.FC = () => {
         });
   };
 
-  // Lumetri Filter String
   const filterStyle = `
     brightness(${100 + state.filters.exposure * 10}%)
     contrast(${100 + state.filters.contrast}%)
@@ -266,7 +405,22 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-[#121212] text-gray-200 overflow-hidden font-sans select-none">
-        
+        {/* Hidden Inputs */}
+        <input 
+            type="file" 
+            ref={projectInputRef} 
+            onChange={handleLoadProject} 
+            accept=".lumina,.json" 
+            className="hidden" 
+        />
+        <input 
+            type="file"
+            ref={mediaImportRef}
+            onChange={(e) => handleImport(e)}
+            accept="video/*,image/*"
+            className="hidden"
+        />
+
         {/* Export Modal */}
         {state.showExportModal && (
             <ExportModal 
@@ -276,29 +430,18 @@ const App: React.FC = () => {
         )}
 
         {/* Header / Menu Bar */}
-        <div className="h-10 bg-[#1e1e1e] border-b border-[#2a2a2a] flex items-center px-4 gap-4 text-xs">
-            <div className="flex items-center gap-2">
-                <span className="font-bold text-blue-500">Pr</span>
-                <span className="text-gray-400">Lumina Pro</span>
-            </div>
-            <div className="h-4 w-px bg-[#333]"></div>
-            <div className="flex gap-4 text-gray-300">
-                <span className="hover:text-white cursor-pointer">File</span>
-                <span className="hover:text-white cursor-pointer">Edit</span>
-                <span className="hover:text-white cursor-pointer">Clip</span>
-                <span className="hover:text-white cursor-pointer">Sequence</span>
-                <span className="text-blue-400 border-b border-blue-400">Editing</span>
-                <span className="hover:text-white cursor-pointer">Color</span>
-                <span className="hover:text-white cursor-pointer">Effects</span>
-            </div>
-            <div className="flex-1"></div>
-            <button 
-                onClick={() => setState(p => ({...p, showExportModal: true}))}
-                className="bg-blue-600 px-3 py-1 rounded text-white font-bold hover:bg-blue-700 transition-colors"
-            >
-                Export
-            </button>
-        </div>
+        <TopMenu 
+            onImport={() => mediaImportRef.current?.click()}
+            onSave={handleSaveProject}
+            onOpen={() => projectInputRef.current?.click()}
+            onExport={() => setState(p => ({...p, showExportModal: true}))}
+            onUndo={() => console.log('Undo not implemented')}
+            onRedo={() => console.log('Redo not implemented')}
+            onDelete={handleDeleteLayer}
+            onRenameLayer={handleRenameLayer}
+            activePanel={state.activePanel}
+            setActivePanel={(p) => setState(s => ({...s, activePanel: p}))}
+        />
 
         {/* Workspace Grid */}
         <div className="flex-1 flex min-h-0">
@@ -314,26 +457,27 @@ const App: React.FC = () => {
                         setFilters={(f) => setState(s => ({...s, filters: f}))}
                         selectedLayer={state.layers.find(l => l.id === state.selectedLayerId)}
                         updateLayer={updateLayer}
-                        onAIChat={(msg) => chatWithAI(state.chatHistory, { filters: state.filters, duration: state.duration }).then(r => setState(prev => ({...prev, chatHistory: [...prev.chatHistory, {role:'assistant', content: r.text}]})))}
+                        onAIChat={handleAIChat}
                         isProcessing={state.isProcessing}
                         chatHistory={state.chatHistory}
                         onAddText={handleAddText}
                         layers={state.layers}
+                        onApplyPreset={handleApplyPreset}
                     />
                 </div>
 
-                {/* Bottom Left: Project Assets (Integrated into Sidebar usually, but here separate for layout feel) */}
+                {/* Bottom Left: Project Assets */}
                 <div className="flex-1 bg-[#1e1e1e] p-2 overflow-y-auto">
-                    <div className="text-[11px] text-gray-400 font-bold mb-2">Project: Media Browser</div>
+                    <div className="text-[11px] text-gray-400 font-bold mb-2 flex justify-between">
+                         <span>Project: Media Browser</span>
+                         <span className="text-gray-600">Writable</span>
+                    </div>
                     <div className="grid grid-cols-4 gap-2">
                         <label className="aspect-square bg-[#232323] border border-[#333] hover:border-gray-500 rounded flex flex-col items-center justify-center cursor-pointer">
                             <Upload className="w-5 h-5 text-gray-500"/>
                             <span className="text-[9px] mt-1 text-gray-400">Import</span>
                             <input type="file" onChange={(e) => handleImport(e, 'video')} className="hidden" accept="video/*"/>
                         </label>
-                        {/* Mock Assets */}
-                        <div className="aspect-square bg-[#232323] border border-[#333] rounded flex items-center justify-center opacity-50"><FileVideo className="w-5 h-5"/></div>
-                        <div className="aspect-square bg-[#232323] border border-[#333] rounded flex items-center justify-center opacity-50"><FileImage className="w-5 h-5"/></div>
                     </div>
                 </div>
             </div>
@@ -343,7 +487,7 @@ const App: React.FC = () => {
                 
                 {/* Top Right: Program Monitor */}
                 <div className="h-[55%] bg-[#0a0a0a] border-b border-[#121212] flex flex-col relative group">
-                     {/* Safe Margins Overlay (Mock) */}
+                     {/* Safe Margins Overlay */}
                      <div className="absolute inset-8 border border-white/10 pointer-events-none z-10"></div>
                      <div className="absolute inset-16 border border-white/10 pointer-events-none z-10"></div>
 

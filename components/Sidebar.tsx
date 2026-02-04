@@ -3,9 +3,9 @@ import {
     Sparkles, Type, MessageSquare, Box, Layers, Settings, 
     Palette, User, Bot, Send, Link as LinkIcon, 
     Clock, Search, FolderOpen, Film, Image as ImageIcon,
-    SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2
+    SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2, FileBox, File
 } from 'lucide-react';
-import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage } from '../types';
+import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage, PRESETS, LuminaPreset } from '../types';
 
 interface SidebarProps {
   activePanel: PanelType;
@@ -19,18 +19,22 @@ interface SidebarProps {
   chatHistory: ChatMessage[];
   onAddText: () => void;
   layers: VideoSegment[];
+  onApplyPreset: (preset: LuminaPreset) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activePanel, setActivePanel, filters, setFilters, 
-  selectedLayer, updateLayer, onAIChat, isProcessing, chatHistory, onAddText, layers
+  selectedLayer, updateLayer, onAIChat, isProcessing, chatHistory, onAddText, layers, onApplyPreset
 }) => {
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
       'video-transitions': true,
       'video-effects': true,
-      'audio-effects': false
+      'audio-effects': false,
+      'presets': true,
+      'project-root': true,
+      'project-sequences': true
   });
 
   useEffect(() => {
@@ -108,21 +112,61 @@ export const Sidebar: React.FC<SidebarProps> = ({
         
         {/* --- PROJECT PANEL --- */}
         {activePanel === PanelType.PROJECT && (
-          <div className="p-2">
+          <div className="p-2 select-none">
             <div className="flex items-center gap-2 mb-2 p-1 bg-[#2a2a2a] rounded text-gray-400">
                 <Search className="w-3 h-3"/>
                 <input type="text" placeholder="Search" className="bg-transparent outline-none w-full"/>
             </div>
-            <div className="grid grid-cols-3 gap-2">
-                {layers.map(layer => (
-                    <div key={layer.id} className="aspect-square bg-[#121212] border border-[#2a2a2a] hover:border-blue-500 rounded flex flex-col items-center justify-center gap-2 cursor-pointer group relative">
-                        {layer.type === 'video' ? <Film className="w-6 h-6 text-purple-500"/> : 
-                         layer.type === 'image' ? <ImageIcon className="w-6 h-6 text-pink-500"/> :
-                         <Type className="w-6 h-6 text-green-500"/>}
-                        <span className="text-[10px] text-gray-500 px-1 truncate w-full text-center">{layer.label}</span>
-                        <div className="absolute top-1 right-1 text-[9px] bg-black/50 px-1 rounded text-white">{layer.duration.toFixed(1)}s</div>
+
+            {/* Tree View Structure for Project */}
+            <div>
+                 <div 
+                    className="flex items-center gap-1 py-1 cursor-pointer hover:bg-[#2a2a2a] text-gray-300 font-bold"
+                    onClick={() => toggleFolder('project-root')}
+                >
+                    {expandedFolders['project-root'] ? <ChevronDown className="w-3 h-3"/> : <ChevronRight className="w-3 h-3"/>}
+                    <Box className="w-3 h-3 fill-gray-500 text-gray-500"/>
+                    Lumina Project
+                </div>
+                
+                {expandedFolders['project-root'] && (
+                    <div className="pl-4 border-l border-[#333] ml-2">
+                        {/* Sequences Bin */}
+                        <div 
+                            className="flex items-center gap-1 py-1 cursor-pointer hover:bg-[#2a2a2a] text-gray-400"
+                            onClick={() => toggleFolder('project-sequences')}
+                        >
+                            {expandedFolders['project-sequences'] ? <ChevronDown className="w-3 h-3"/> : <ChevronRight className="w-3 h-3"/>}
+                            <Folder className="w-3 h-3 fill-blue-900 text-blue-500"/>
+                            Sequences
+                        </div>
+                        {expandedFolders['project-sequences'] && (
+                             <div className="pl-4 border-l border-[#333] ml-2 mb-2">
+                                 <div className="flex items-center gap-2 py-1 hover:bg-[#333] cursor-pointer text-green-400">
+                                     <Layers className="w-3 h-3"/> Sequence 01
+                                 </div>
+                             </div>
+                        )}
+
+                        {/* Media Files */}
+                        <div className="text-[10px] font-bold text-gray-500 mt-2 mb-1 pl-1">MEDIA</div>
+                        <div className="grid grid-cols-3 gap-2">
+                            {layers.map(layer => (
+                                <div key={layer.id} className="aspect-square bg-[#121212] border border-[#2a2a2a] hover:border-blue-500 rounded flex flex-col items-center justify-center gap-2 cursor-pointer group relative">
+                                    {layer.type === 'video' ? <Film className="w-6 h-6 text-purple-500"/> : 
+                                    layer.type === 'image' ? <ImageIcon className="w-6 h-6 text-pink-500"/> :
+                                    <Type className="w-6 h-6 text-green-500"/>}
+                                    <span className="text-[9px] text-gray-500 px-1 truncate w-full text-center">{layer.label}</span>
+                                </div>
+                            ))}
+                             {/* Import Button */}
+                             <div className="aspect-square border border-dashed border-[#333] rounded flex flex-col items-center justify-center text-gray-600 hover:text-gray-400 hover:border-gray-500">
+                                 <Plus className="w-4 h-4"/>
+                                 <span className="text-[9px]">Import</span>
+                             </div>
+                        </div>
                     </div>
-                ))}
+                )}
             </div>
           </div>
         )}
@@ -133,6 +177,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                  <div className="flex items-center gap-2 mb-2 p-1 bg-[#2a2a2a] rounded text-gray-400">
                     <Search className="w-3 h-3"/>
                     <input type="text" placeholder="Search Effects" className="bg-transparent outline-none w-full"/>
+                </div>
+
+                {/* Lumina Presets */}
+                <div>
+                    <div 
+                        className="flex items-center gap-1 py-1 cursor-pointer hover:bg-[#2a2a2a] text-gray-200 font-bold"
+                        onClick={() => toggleFolder('presets')}
+                    >
+                        {expandedFolders['presets'] ? <ChevronDown className="w-3 h-3"/> : <ChevronRight className="w-3 h-3"/>}
+                        <Folder className="w-3 h-3 fill-blue-600 text-blue-600"/>
+                        Lumina Presets
+                    </div>
+                    {expandedFolders['presets'] && (
+                        <div className="pl-4 border-l border-[#333] ml-2">
+                            {PRESETS.map(preset => (
+                                <div 
+                                    key={preset.id} 
+                                    onClick={() => onApplyPreset(preset)}
+                                    className="py-1 pl-2 text-gray-300 hover:bg-[#333] hover:text-white cursor-pointer flex items-center gap-2 group border border-transparent hover:border-[#333]"
+                                    title={`Apply ${preset.name}`}
+                                >
+                                    <Sparkles className="w-3 h-3 text-yellow-500"/> {preset.name}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Video Transitions */}
