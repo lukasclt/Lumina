@@ -7,8 +7,9 @@ const getAI = () => {
     if (aiInstance) return aiInstance;
     try {
         // Explicitly access window.process to ensure we get the shim defined in index.html
-        // preventing reference errors in module scope
-        const apiKey = (window as any).process?.env?.API_KEY;
+        // preventing reference errors in module scope.
+        // Also check standard process.env for robust dev environment support.
+        const apiKey = (window as any).process?.env?.API_KEY || (typeof process !== 'undefined' ? process.env?.API_KEY : undefined);
         
         if (!apiKey) {
             console.warn("API Key not found in window.process.env");
@@ -142,8 +143,9 @@ export const chatWithAI = async (
     Be concise.
   `;
 
-  // Filter history to simple text parts for stability
-  const previousHistory = history.map(msg => ({
+  // Map history to Gemini Content format.
+  // history already contains the latest user message.
+  const contents = history.map(msg => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
   }));
@@ -155,10 +157,7 @@ export const chatWithAI = async (
   try {
     const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: [
-            ...previousHistory,
-            { role: 'user', parts: [{ text: history[history.length - 1].content }] }
-        ],
+        contents: contents,
         config: {
             systemInstruction: systemInstruction,
             tools: toolsConfig
@@ -166,7 +165,7 @@ export const chatWithAI = async (
     });
 
     const candidate = response.candidates?.[0];
-    const text = candidate?.content?.parts?.find(p => p.text)?.text || "Processing your request...";
+    const text = candidate?.content?.parts?.find(p => p.text)?.text || "";
     
     const toolCalls = candidate?.content?.parts
         ?.filter(p => p.functionCall)
@@ -174,8 +173,11 @@ export const chatWithAI = async (
             name: p.functionCall?.name,
             args: p.functionCall?.args
         })) || [];
+        
+    // Handle case where model only returns tool calls and no text
+    const finalText = text || (toolCalls.length > 0 ? "Executing commands..." : "I didn't understand that.");
 
-    return { text, toolCalls };
+    return { text: finalText, toolCalls };
 
   } catch (error) {
     console.error("Gemini Agent Error:", error);

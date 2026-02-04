@@ -75,6 +75,9 @@ const App: React.FC = () => {
               // Simple sigmoid-like approx for "Easy Ease"
               ratio = ratio < 0.5 ? 2 * ratio * ratio : 1 - Math.pow(-2 * ratio + 2, 2) / 2;
               break;
+          case 'step':
+              ratio = 0; // Hold previous value
+              break;
           case 'linear':
           default:
               // ratio remains linear
