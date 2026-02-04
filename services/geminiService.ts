@@ -86,7 +86,7 @@ export const analyzeVideoForCuts = async (file: File, duration: number): Promise
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-latest",
+      model: "gemini-3-flash-preview",
       contents: { parts: [{ text: prompt }, videoPart] },
       config: { responseMimeType: "application/json" }
     });
@@ -128,13 +128,11 @@ export const chatWithAI = async (
     You are Lumina AI, an expert Motion Graphics Designer and Video Editor Agent.
     
     **Capabilities**:
-    1. **Search & Research**: Use Google Search to find trends, styles, or information (e.g., "What is the editing style of MrBeast?").
-    2. **Auto-Cut**: Analyze and cut videos intelligently.
-    3. **Motion Design**: Create complex animations (text, shapes) similar to After Effects.
-    4. **Color Grading**: Apply cinematic filters.
+    1. **Auto-Cut**: Analyze and cut videos intelligently.
+    2. **Motion Design**: Create complex animations (text, shapes) similar to After Effects.
+    3. **Color Grading**: Apply cinematic filters.
 
     **Behavior**:
-    - If the user asks for a style or info, SEARCH first.
     - If the user wants to "cut" or "trim", use 'auto_cut_video'.
     - If the user wants text, titles, or effects, use 'create_motion_graphic'.
     - Always sound professional yet helpful.
@@ -145,14 +143,15 @@ export const chatWithAI = async (
       parts: [{ text: msg.content }]
   }));
 
+  // Note: googleSearch cannot be used together with functionDeclarations.
+  // We prioritize functionDeclarations for the Editor Agent capabilities.
   const toolsConfig: Tool[] = [
-      { googleSearch: {} },
       { functionDeclarations: [cutVideoTool, motionGraphicTool, colorGradeTool] }
   ];
 
   try {
     const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-latest",
+        model: "gemini-3-flash-preview",
         contents: [
             ...previousHistory.map(h => ({ role: h.role, parts: h.parts })),
             { role: 'user', parts: [{ text: history[history.length - 1].content }] }
@@ -174,7 +173,7 @@ export const chatWithAI = async (
             args: p.functionCall?.args
         })) || [];
 
-    // Extract Grounding (Search) Sources
+    // Extract Grounding (Search) Sources (Will be empty as tool is disabled)
     const sources = candidate?.groundingMetadata?.groundingChunks
         ?.map((c: any) => c.web ? { uri: c.web.uri, title: c.web.title } : null)
         .filter(Boolean) || [];

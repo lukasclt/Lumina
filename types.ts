@@ -1,4 +1,4 @@
-export type LayerType = 'video' | 'image' | 'text' | 'audio';
+export type LayerType = 'video' | 'image' | 'text' | 'audio' | 'adjustment';
 
 export interface Transform3D {
   rotateX: number;
@@ -11,12 +11,18 @@ export interface Transform3D {
 }
 
 export interface AnimationKeyframe {
-  property: keyof Transform3D | 'opacity';
-  startValue: number;
-  endValue: number;
-  startTime: number; // relative to layer start (seconds)
-  duration: number; // seconds
-  easing: 'linear' | 'easeOut' | 'elastic';
+  property: string; // Generic path like 'transform.scale' or 'filters.brightness'
+  value: number;
+  time: number; // relative to layer start (seconds)
+  easing: 'linear' | 'easeOut' | 'bezier';
+}
+
+export interface VideoEffect {
+  id: string;
+  name: string;
+  type: 'blur' | 'chroma' | 'glow' | 'sharpen' | 'vignette';
+  properties: Record<string, number>;
+  enabled: boolean;
 }
 
 export interface VideoSegment {
@@ -28,28 +34,37 @@ export interface VideoSegment {
   label: string;
   src?: string; // For images/video/audio
   content?: string; // For text
+  speed: number; // 1.0 is normal speed
   style?: {
     fontFamily?: string;
     fontSize?: number;
     color?: string;
     backgroundColor?: string;
     textShadow?: string;
-    className?: string; // For special effects like neon/glitch
+    className?: string;
   };
   transform: Transform3D;
+  anchorPoint: { x: number; y: number };
   opacity: number;
+  blendMode: 'normal' | 'screen' | 'multiply' | 'overlay';
+  effects: VideoEffect[];
   animations: AnimationKeyframe[];
   isActive: boolean;
+  locked: boolean;
 }
 
 export interface VideoFilter {
-  brightness: number; 
-  contrast: number;   
-  saturate: number;   
-  grayscale: number;  
-  sepia: number;      
-  hueRotate: number;  
-  blur: number;       
+  exposure: number;
+  contrast: number;
+  highlights: number;
+  shadows: number;
+  whites: number;
+  blacks: number;
+  saturation: number;
+  temperature: number;
+  tint: number;
+  sharpness: number;
+  vignette: number;
 }
 
 export interface ChatMessage {
@@ -60,66 +75,72 @@ export interface ChatMessage {
 }
 
 export interface EditingState {
-  file: File | null; // Main video file
+  file: File | null;
   videoUrl: string | null;
   duration: number;
   currentTime: number;
   isPlaying: boolean;
-  layers: VideoSegment[]; // All timeline items
+  layers: VideoSegment[];
   selectedLayerId: string | null;
-  filters: VideoFilter; // Global filters for main video
+  filters: VideoFilter; // Global Lumetri (or Adjustment Layer logic)
   isProcessing: boolean;
-  chatHistory: ChatMessage[]; // Full conversation memory
+  chatHistory: ChatMessage[];
   activeTool: Tool;
+  activePanel: PanelType;
   preferences: {
-    theme: 'dark' | 'light';
+    theme: 'dark';
     autoSave: boolean;
     timelineSnap: boolean;
   };
-  showPreferences: boolean;
 }
 
-export enum Tab {
+export enum PanelType {
   PROJECT = 'PROJECT',
-  EFFECTS = 'EFFECTS', // Includes 3D
-  TEXT = 'TEXT',
-  AI_CHAT = 'AI_CHAT',
+  EFFECT_CONTROLS = 'EFFECT_CONTROLS',
+  LUMETRI = 'LUMETRI',
+  ESSENTIAL_GRAPHICS = 'ESSENTIAL_GRAPHICS',
+  AI_AGENT = 'AI_AGENT'
 }
 
 export enum Tool {
-  SELECTION = 'SELECTION',
-  RAZOR = 'RAZOR',
-  HAND = 'HAND',
-  TYPE = 'TYPE',
-  PEN = 'PEN'
+  SELECTION = 'SELECTION',       // V
+  TRACK_SELECT_FWD = 'TRACK_FWD',// A
+  RIPPLE_EDIT = 'RIPPLE',        // B
+  ROLLING_EDIT = 'ROLLING',      // N
+  RAZOR = 'RAZOR',               // C
+  SLIP = 'SLIP',                 // Y
+  SLIDE = 'SLIDE',               // U
+  PEN = 'PEN',                   // P
+  HAND = 'HAND',                 // H
+  ZOOM = 'ZOOM',                 // Z
+  TYPE = 'TYPE',                 // T
+  RATE_STRETCH = 'RATE_STRETCH'  // R
 }
 
 export const DEFAULT_TRANSFORM: Transform3D = {
   rotateX: 0,
   rotateY: 0,
   rotateZ: 0,
-  scale: 1,
+  scale: 100, // Normalized to 100% like Premiere
   translateX: 0,
   translateY: 0,
   perspective: 1000
 };
 
 export const DEFAULT_FILTERS: VideoFilter = {
-  brightness: 100,
-  contrast: 100,
-  saturate: 100,
-  grayscale: 0,
-  sepia: 0,
-  hueRotate: 0,
-  blur: 0
+  exposure: 0,
+  contrast: 0,
+  highlights: 0,
+  shadows: 0,
+  whites: 0,
+  blacks: 0,
+  saturation: 100,
+  temperature: 0,
+  tint: 0,
+  sharpness: 0,
+  vignette: 0
 };
 
 export const GOOGLE_FONTS = [
-  'Inter',
-  'Roboto',
-  'Oswald',
-  'Lato',
-  'Poppins',
-  'Montserrat',
-  'Playfair Display'
+  'Inter', 'Roboto', 'Oswald', 'Lato', 'Poppins', 'Montserrat', 'Playfair Display'
 ];
