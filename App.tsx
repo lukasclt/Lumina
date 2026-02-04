@@ -31,6 +31,7 @@ const App: React.FC = () => {
   });
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const monitorRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const mediaImportRef = useRef<HTMLInputElement>(null);
@@ -151,10 +152,32 @@ const App: React.FC = () => {
       }
   };
 
-  const handleDeleteLayer = () => {
-      if (state.selectedLayerId) {
-          setState(p => ({...p, layers: p.layers.filter(l => l.id !== p.selectedLayerId), selectedLayerId: null}));
+  const handleDeleteLayer = (id?: string) => {
+      const targetId = id || state.selectedLayerId;
+      if (targetId) {
+          setState(p => ({...p, layers: p.layers.filter(l => l.id !== targetId), selectedLayerId: null}));
       }
+  };
+
+  const handleDuplicateLayer = (id: string, newTime: number, newTrack: number) => {
+      setState(prev => {
+          const original = prev.layers.find(l => l.id === id);
+          if (!original) return prev;
+          
+          const newLayer: VideoSegment = {
+              ...original,
+              id: `${original.id}-copy-${Date.now()}`,
+              start: newTime,
+              track: newTrack,
+              label: `${original.label} Copy`
+          };
+          
+          return {
+              ...prev,
+              layers: [...prev.layers, newLayer],
+              selectedLayerId: newLayer.id
+          };
+      });
   };
 
   const handleApplyPreset = (preset: LuminaPreset) => {
@@ -351,6 +374,54 @@ const App: React.FC = () => {
       }
   };
 
+  // --- PROGRAM MONITOR INTERACTION ---
+  
+  const handleOverlayMouseDown = (e: React.MouseEvent, layer: VideoSegment, type: 'move' | 'resize') => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      // Select layer if not selected
+      if(state.selectedLayerId !== layer.id) {
+          setState(p => ({...p, selectedLayerId: layer.id, activePanel: PanelType.EFFECT_CONTROLS}));
+      }
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const initialTransform = { ...layer.transform };
+
+      const handleMouseMove = (ev: MouseEvent) => {
+          const deltaX = ev.clientX - startX;
+          const deltaY = ev.clientY - startY;
+
+          if (type === 'move') {
+              updateLayer(layer.id, {
+                  transform: {
+                      ...initialTransform,
+                      translateX: initialTransform.translateX + deltaX,
+                      translateY: initialTransform.translateY + deltaY
+                  }
+              });
+          } else if (type === 'resize') {
+              // Simple uniform scaling based on X movement magnitude
+              // Holding Shift keeps Aspect Ratio (implied in simple scaling here, actually)
+              // To make shift optional we would need independent scaleX/scaleY which our model simplifies to 'scale'
+              const sensitivity = 0.5;
+              const newScale = Math.max(0, initialTransform.scale + (deltaX * sensitivity));
+              updateLayer(layer.id, {
+                  transform: { ...initialTransform, scale: newScale }
+              });
+          }
+      };
+
+      const handleMouseUp = () => {
+          window.removeEventListener('mousemove', handleMouseMove);
+          window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+  };
+
   // --- Rendering Compositon ---
   const renderOverlays = () => {
       return state.layers
@@ -358,6 +429,9 @@ const App: React.FC = () => {
         .filter(l => state.currentTime >= l.start && state.currentTime <= (l.start + l.duration))
         .map(layer => {
             const scale = layer.transform.scale / 100;
+            const isSelected = state.selectedLayerId === layer.id;
+            
+            // Base style for content
             const style: React.CSSProperties = {
                 transform: `
                     translate3d(${layer.transform.translateX}px, ${layer.transform.translateY}px, 0)
@@ -367,30 +441,56 @@ const App: React.FC = () => {
                 opacity: layer.opacity,
                 position: 'absolute',
                 top: '50%', left: '50%',
-                marginTop: '-50px', marginLeft: '-100px',
+                marginTop: '-50px', marginLeft: '-100px', // Center origin logic (simplified)
                 mixBlendMode: layer.blendMode,
-                pointerEvents: 'none',
+                pointerEvents: 'auto', // Allow clicking
+                userSelect: 'none'
             };
 
-            if (layer.type === 'image' && layer.src) {
-                return <img key={layer.id} src={layer.src} alt="" className="max-w-[400px] object-contain" style={style} />;
-            }
-            if (layer.type === 'text' && layer.content) {
-                return (
-                    <div key={layer.id} style={{
-                        ...style,
-                        fontFamily: layer.style?.fontFamily,
-                        fontSize: `${layer.style?.fontSize}px`,
-                        color: layer.style?.color,
-                        textShadow: layer.style?.textShadow,
-                        whiteSpace: 'nowrap',
-                        fontWeight: 700
-                    }}>
-                        {layer.content}
-                    </div>
-                );
-            }
-            return null;
+            const Content = () => {
+                if (layer.type === 'image' && layer.src) {
+                    return <img src={layer.src} alt="" className="max-w-[400px] object-contain pointer-events-none" />;
+                }
+                if (layer.type === 'text' && layer.content) {
+                    return (
+                        <div style={{
+                            fontFamily: layer.style?.fontFamily,
+                            fontSize: `${layer.style?.fontSize}px`,
+                            color: layer.style?.color,
+                            textShadow: layer.style?.textShadow,
+                            whiteSpace: 'nowrap',
+                            fontWeight: 700
+                        }}>
+                            {layer.content}
+                        </div>
+                    );
+                }
+                return null;
+            };
+
+            return (
+                <div key={layer.id} style={style} 
+                     onMouseDown={(e) => handleOverlayMouseDown(e, layer, 'move')}
+                     className={`cursor-move group ${isSelected ? 'z-50' : 'z-10'}`}>
+                    
+                    <Content />
+
+                    {/* Transform Controls (Gizmo) */}
+                    {isSelected && (
+                        <div className="absolute -inset-2 border-2 border-blue-500 pointer-events-none">
+                            {/* Resize Handles */}
+                            <div 
+                                className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-blue-500 border border-white cursor-nwse-resize pointer-events-auto"
+                                onMouseDown={(e) => handleOverlayMouseDown(e, layer, 'resize')}
+                            />
+                            {/* Visual Corners */}
+                            <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-blue-500 border border-white"/>
+                            <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-blue-500 border border-white"/>
+                            <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-blue-500 border border-white"/>
+                        </div>
+                    )}
+                </div>
+            );
         });
   };
 
@@ -437,7 +537,7 @@ const App: React.FC = () => {
             onExport={() => setState(p => ({...p, showExportModal: true}))}
             onUndo={() => console.log('Undo not implemented')}
             onRedo={() => console.log('Redo not implemented')}
-            onDelete={handleDeleteLayer}
+            onDelete={() => handleDeleteLayer()}
             onRenameLayer={handleRenameLayer}
             activePanel={state.activePanel}
             setActivePanel={(p) => setState(s => ({...s, activePanel: p}))}
@@ -491,7 +591,7 @@ const App: React.FC = () => {
                      <div className="absolute inset-8 border border-white/10 pointer-events-none z-10"></div>
                      <div className="absolute inset-16 border border-white/10 pointer-events-none z-10"></div>
 
-                     <div className="flex-1 flex items-center justify-center overflow-hidden bg-black relative">
+                     <div className="flex-1 flex items-center justify-center overflow-hidden bg-black relative" ref={monitorRef}>
                         {state.videoUrl ? (
                             <div className="relative w-full h-full flex items-center justify-center">
                                 <video 
@@ -500,7 +600,7 @@ const App: React.FC = () => {
                                     className="max-w-full max-h-full"
                                     style={{ filter: filterStyle }}
                                 />
-                                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                                <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
                                     {renderOverlays()}
                                 </div>
                             </div>
@@ -550,6 +650,9 @@ const App: React.FC = () => {
                             }}
                             onSelectLayer={(id) => setState(s => ({...s, selectedLayerId: id, activePanel: PanelType.EFFECT_CONTROLS}))}
                             onRazor={handleRazor}
+                            onUpdateLayer={updateLayer}
+                            onDuplicateLayer={handleDuplicateLayer}
+                            onDeleteLayer={handleDeleteLayer}
                             activeTool={state.activeTool}
                         />
                      </div>

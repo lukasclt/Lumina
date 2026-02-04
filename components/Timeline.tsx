@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { VideoSegment, Tool } from '../types';
-import { Eye, Volume2, Lock, Mic, Layers } from 'lucide-react';
+import { Eye, Volume2, Lock, Mic, Trash2, Copy, Edit2 } from 'lucide-react';
 
 interface TimelineProps {
   duration: number;
@@ -10,7 +10,17 @@ interface TimelineProps {
   onSeek: (time: number) => void;
   onSelectLayer: (id: string) => void;
   onRazor: (time: number, layerId: string) => void;
+  onUpdateLayer: (id: string, updates: Partial<VideoSegment>) => void;
+  onDuplicateLayer: (id: string, newTime: number, newTrack: number) => void;
+  onDeleteLayer: (id: string) => void;
   activeTool: Tool;
+}
+
+interface ContextMenuState {
+    visible: boolean;
+    x: number;
+    y: number;
+    layerId: string | null;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({ 
@@ -21,41 +31,135 @@ export const Timeline: React.FC<TimelineProps> = ({
   onSeek, 
   onSelectLayer,
   onRazor,
+  onUpdateLayer,
+  onDuplicateLayer,
+  onDeleteLayer,
   activeTool
 }) => {
   const vTracks = [2, 1, 0]; // V3, V2, V1
   const aTracks = [0, 1]; // A1, A2
   
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, layerId: null });
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // Close context menu on click elsewhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu({ ...contextMenu, visible: false });
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, [contextMenu]);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    const frames = Math.floor((seconds % 1) * 30); // 30fps assumption
+    const frames = Math.floor((seconds % 1) * 30);
     return `${mins}:${secs.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
   };
 
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (activeTool !== Tool.SELECTION && activeTool !== Tool.RAZOR) return;
+    
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, x / rect.width));
     const clickTime = percentage * duration;
-
-    // Default seek behavior if clicking on ruler or empty space (unless handled by layer click)
     onSeek(clickTime);
   };
 
-  const handleLayerClick = (e: React.MouseEvent<HTMLDivElement>, layer: VideoSegment) => {
+  const handleContextMenu = (e: React.MouseEvent, layerId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setContextMenu({
+          visible: true,
+          x: e.clientX,
+          y: e.clientY,
+          layerId
+      });
+      onSelectLayer(layerId);
+  };
+
+  // --- DRAG AND DROP LOGIC ---
+  const handleMouseDown = (e: React.MouseEvent, layer: VideoSegment) => {
       e.stopPropagation();
       
+      // Razor Tool Logic
       if (activeTool === Tool.RAZOR) {
-          const rect = e.currentTarget.parentElement?.parentElement?.getBoundingClientRect(); // Get timeline width container
+          const rect = containerRef.current?.getBoundingClientRect();
           if (rect) {
              const x = e.clientX - rect.left;
              const percentage = Math.max(0, Math.min(1, x / rect.width));
              const clickTime = percentage * duration;
              onRazor(clickTime, layer.id);
           }
-      } else {
+          return;
+      }
+
+      // Selection / Move Tool Logic
+      if (activeTool === Tool.SELECTION) {
           onSelectLayer(layer.id);
+          
+          if (e.button !== 0) return; // Only Left Click
+
+          const startX = e.clientX;
+          const startY = e.clientY;
+          const originalStartTime = layer.start;
+          const originalTrack = layer.track;
+          const trackHeight = 64; // Height of one track in pixels (h-16 = 4rem = 64px)
+
+          // If Alt is pressed, we define we are duplicating
+          const isDuplicating = e.altKey;
+          let hasDuplicated = false;
+
+          setDraggingId(layer.id);
+
+          const handleMouseMove = (moveEvent: MouseEvent) => {
+              if (!containerRef.current) return;
+              
+              const rect = containerRef.current.getBoundingClientRect();
+              const deltaX = moveEvent.clientX - startX;
+              const deltaY = moveEvent.clientY - startY;
+
+              // Calculate Time Shift
+              const width = rect.width;
+              const timeShift = (deltaX / width) * duration;
+              let newTime = Math.max(0, originalStartTime + timeShift);
+
+              // Simple Snapping to Playhead (Magnetism)
+              if (Math.abs(newTime - currentTime) < duration * 0.01) {
+                  newTime = currentTime;
+              }
+
+              // Calculate Track Shift
+              // Negative deltaY means moving UP (higher track index in our visual array logic)
+              // But visual array is [2, 1, 0]. DOM is stacked top to bottom.
+              // Moving UP visually means decreasing Y, which corresponds to Increasing Track Index in our render loop?
+              // Wait, V3 is top. V1 is bottom. 
+              // If I drag Up (negative Y), I want to go from V1(0) to V2(1).
+              const trackShift = Math.round(-deltaY / trackHeight);
+              let newTrack = Math.max(0, Math.min(2, originalTrack + trackShift));
+
+              if (isDuplicating && !hasDuplicated && (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5)) {
+                  onDuplicateLayer(layer.id, newTime, newTrack);
+                  hasDuplicated = true; // Prevent multiple dupes in one drag
+                  // End this drag session essentially for the original, but in reality we'd switch focus.
+                  // For simplicity in this implementation, we just stop dragging the original to avoid conflict
+                  // Or we update the Original if not duplicating
+              }
+              
+              if (!isDuplicating) {
+                  onUpdateLayer(layer.id, { start: newTime, track: newTrack });
+              }
+          };
+
+          const handleMouseUp = () => {
+              setDraggingId(null);
+              window.removeEventListener('mousemove', handleMouseMove);
+              window.removeEventListener('mouseup', handleMouseUp);
+          };
+
+          window.addEventListener('mousemove', handleMouseMove);
+          window.addEventListener('mouseup', handleMouseUp);
       }
   };
 
@@ -70,7 +174,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-[#161616] select-none text-[10px] font-sans overflow-hidden">
+    <div className="flex-1 flex flex-col bg-[#161616] select-none text-[10px] font-sans overflow-hidden relative">
       
       {/* Time Ruler */}
       <div className="h-6 bg-[#1e1e1e] border-b border-[#2a2a2a] flex items-end relative ml-24 cursor-pointer"
@@ -85,7 +189,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         </div>
         {/* Playhead Head */}
         <div 
-            className="absolute top-0 bottom-0 w-px bg-blue-500 z-30"
+            className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 pointer-events-none"
             style={{ left: `${(currentTime / duration) * 100}%` }}
         >
              <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-blue-500 rotate-45 rounded-sm"></div>
@@ -95,7 +199,7 @@ export const Timeline: React.FC<TimelineProps> = ({
       <div className="flex-1 flex overflow-y-auto custom-scrollbar">
         
         {/* Track Headers */}
-        <div className="w-24 flex-shrink-0 bg-[#1e1e1e] border-r border-[#121212] flex flex-col">
+        <div className="w-24 flex-shrink-0 bg-[#1e1e1e] border-r border-[#121212] flex flex-col z-20">
           {/* Video Tracks */}
           {vTracks.map((trackId) => (
             <div key={`v-${trackId}`} className="h-16 border-b border-[#2a2a2a] flex flex-col justify-center px-1 gap-1 relative group bg-[#232323]">
@@ -123,7 +227,11 @@ export const Timeline: React.FC<TimelineProps> = ({
         </div>
 
         {/* Timeline Content */}
-        <div className={`flex-1 relative bg-[#161616] ${getCursor()}`} onClick={handleTimelineClick}>
+        <div 
+            ref={containerRef}
+            className={`flex-1 relative bg-[#161616] ${getCursor()}`} 
+            onClick={handleTimelineClick}
+        >
           {/* Playhead Line */}
           <div 
             className="absolute top-0 bottom-0 w-px bg-blue-500 z-20 pointer-events-none"
@@ -146,12 +254,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                 return (
                   <div
                     key={layer.id}
-                    onClick={(e) => handleLayerClick(e, layer)}
-                    className={`absolute top-0.5 bottom-0.5 rounded-[2px] border cursor-pointer overflow-hidden group ${bgColor}`}
+                    onMouseDown={(e) => handleMouseDown(e, layer)}
+                    onContextMenu={(e) => handleContextMenu(e, layer.id)}
+                    className={`absolute top-0.5 bottom-0.5 rounded-[2px] border cursor-pointer overflow-hidden group ${bgColor} ${draggingId === layer.id ? 'opacity-80 z-50 shadow-lg scale-[1.01]' : 'z-10'}`}
                     style={{
                       left: `${left}%`,
                       width: `${width}%`,
-                      minWidth: '2px'
+                      minWidth: '2px',
+                      transition: draggingId === layer.id ? 'none' : 'top 0.2s, background-color 0.1s'
                     }}
                   >
                     {/* Clip Label */}
@@ -160,16 +270,16 @@ export const Timeline: React.FC<TimelineProps> = ({
                         {layer.label}
                     </div>
                     
-                    {/* Razor Line Indicator (Visual only, would need mouse tracking for perfect UX) */}
+                    {/* Razor Line Indicator */}
                     {activeTool === Tool.RAZOR && (
                         <div className="hidden group-hover:block absolute top-0 bottom-0 w-0.5 bg-white mix-blend-difference pointer-events-none" style={{left: '50%'}}></div>
                     )}
 
                     {/* Selection Handles */}
-                    {isSelected && activeTool === Tool.SELECTION && (
+                    {isSelected && activeTool === Tool.SELECTION && !draggingId && (
                         <>
-                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-white/50 cursor-w-resize"></div>
-                            <div className="absolute right-0 top-0 bottom-0 w-1 bg-white/50 cursor-e-resize"></div>
+                            <div className="absolute left-0 top-0 bottom-0 w-2 hover:bg-white/50 cursor-w-resize z-20"></div>
+                            <div className="absolute right-0 top-0 bottom-0 w-2 hover:bg-white/50 cursor-e-resize z-20"></div>
                         </>
                     )}
                   </div>
@@ -192,6 +302,41 @@ export const Timeline: React.FC<TimelineProps> = ({
           ))}
         </div>
       </div>
+
+      {/* CONTEXT MENU */}
+      {contextMenu.visible && (
+          <div 
+            className="fixed bg-[#2a2a2a] border border-[#444] shadow-xl rounded py-1 z-50 w-40"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+          >
+              <button onClick={() => { 
+                  const newName = prompt("Rename Clip");
+                  if (newName && contextMenu.layerId) onUpdateLayer(contextMenu.layerId, { label: newName });
+                  setContextMenu(prev => ({...prev, visible: false}));
+              }} className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200 flex items-center gap-2">
+                  <Edit2 className="w-3 h-3"/> Rename
+              </button>
+              
+              <button onClick={() => {
+                   if(contextMenu.layerId) {
+                        const layer = layers.find(l => l.id === contextMenu.layerId);
+                        if(layer) onDuplicateLayer(layer.id, layer.start + 1, layer.track);
+                   }
+                   setContextMenu(prev => ({...prev, visible: false}));
+              }} className="w-full text-left px-3 py-1.5 hover:bg-blue-600 text-gray-200 flex items-center gap-2">
+                  <Copy className="w-3 h-3"/> Duplicate
+              </button>
+              
+              <div className="h-px bg-[#444] my-1"></div>
+              
+              <button onClick={() => {
+                  if (contextMenu.layerId) onDeleteLayer(contextMenu.layerId);
+                  setContextMenu(prev => ({...prev, visible: false}));
+              }} className="w-full text-left px-3 py-1.5 hover:bg-red-900 text-red-200 flex items-center gap-2">
+                  <Trash2 className="w-3 h-3"/> Delete
+              </button>
+          </div>
+      )}
     </div>
   );
 };

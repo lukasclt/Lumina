@@ -1,14 +1,18 @@
 import { GoogleGenAI, FunctionDeclaration, Type, Tool } from "@google/genai";
 import { VideoSegment, VideoFilter, ChatMessage } from "../types";
 
+// Ensure process is recognized in the browser module scope (shimmed in index.html)
+declare const process: any;
+
 let aiInstance: GoogleGenAI | null = null;
 
 const getAI = () => {
     if (aiInstance) return aiInstance;
     try {
+        // Initialize with the API Key from the shimmed process.env
         aiInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
     } catch (e) {
-        console.error("Failed to initialize GoogleGenAI", e);
+        console.error("Failed to initialize GoogleGenAI. Check API Key and SDK version.", e);
         return null;
     }
     return aiInstance;
