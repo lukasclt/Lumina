@@ -12,6 +12,7 @@ interface TopMenuProps {
   onDelete: () => void;
   onRenameLayer: () => void;
   onOpenSettings: () => void;
+  onOpenSequenceSettings: () => void;
   activePanel: PanelType;
   setActivePanel: (panel: PanelType) => void;
 }
@@ -20,7 +21,7 @@ type MenuId = 'file' | 'edit' | 'clip' | 'sequence' | null;
 
 export const TopMenu: React.FC<TopMenuProps> = ({
   onImport, onSave, onOpen, onExport,
-  onUndo, onRedo, onDelete, onRenameLayer, onOpenSettings,
+  onUndo, onRedo, onDelete, onRenameLayer, onOpenSettings, onOpenSequenceSettings,
   activePanel, setActivePanel
 }) => {
   const [activeMenu, setActiveMenu] = useState<MenuId>(null);
@@ -171,7 +172,7 @@ export const TopMenu: React.FC<TopMenuProps> = ({
           </button>
           {activeMenu === 'sequence' && (
             <MenuDropdown>
-              <MenuItem label="Sequence Settings..." />
+              <MenuItem label="Sequence Settings..." onClick={onOpenSequenceSettings} />
               <Separator />
               <MenuItem label="Render In to Out" shortcut="Enter" />
               <MenuItem label="Delete Render Files" />

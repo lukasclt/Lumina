@@ -88,6 +88,8 @@ export interface ProjectFile {
     name: string;
     date: string;
     duration: number;
+    resolution?: { width: number; height: number };
+    fps?: number;
     filters: VideoFilter;
     layers: VideoSegment[];
 }
@@ -103,6 +105,8 @@ export interface EditingState {
   file: File | null;
   videoUrl: string | null;
   duration: number;
+  resolution: { width: number; height: number };
+  fps: number;
   currentTime: number;
   isPlaying: boolean;
   layers: VideoSegment[];

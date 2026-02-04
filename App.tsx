@@ -5,6 +5,7 @@ import { Timeline } from './components/Timeline';
 import { ToolsBar } from './components/ToolsBar';
 import { ExportModal } from './components/ExportModal';
 import { SettingsModal } from './components/SettingsModal';
+import { SequenceSettingsModal } from './components/SequenceSettingsModal';
 import { TopMenu } from './components/TopMenu';
 import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe, ProjectFile, LuminaPreset } from './types';
 import { chatWithAI, analyzeVideoForCuts, resetAI } from './services/geminiService';
@@ -14,6 +15,8 @@ const App: React.FC = () => {
     file: null,
     videoUrl: null,
     duration: 0,
+    resolution: { width: 1920, height: 1080 },
+    fps: 30,
     currentTime: 0,
     isPlaying: false,
     layers: [],
@@ -32,6 +35,7 @@ const App: React.FC = () => {
   });
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const monitorRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -69,6 +73,15 @@ const App: React.FC = () => {
       setCookie('gemini_api_key', key, 365); // Save for 1 year
       resetAI(); // Reset the AI service to use the new key
       setShowSettings(false);
+  };
+
+  const handleSaveSequenceSettings = (width: number, height: number, fps: number) => {
+      setState(prev => ({
+          ...prev,
+          resolution: { width, height },
+          fps: fps
+      }));
+      setShowSequenceSettings(false);
   };
 
   // --- Helper: Keyframe Interpolation with Easing ---
@@ -159,23 +172,10 @@ const App: React.FC = () => {
       if (state.isPlaying) {
           // Playback Loop
           setState(prev => {
-              const nextTime = prev.currentTime + 0.033; // ~30fps
+              // Calculate increment based on FPS (default 30 if undefined)
+              const increment = 1 / (prev.fps || 30);
+              const nextTime = prev.currentTime + increment; 
               if (nextTime >= prev.duration) return { ...prev, isPlaying: false, currentTime: prev.duration };
-              
-              // Note: We do NOT skip gaps automatically. Professional editors play black frames during gaps.
-              // To enable "Gap Skipping" uncomment below:
-              /*
-              const activeClip = prev.layers.find(l => l.track === 0 && nextTime >= l.start && nextTime < l.start + l.duration);
-              if (!activeClip && prev.layers.some(l => l.track === 0)) {
-                  // Find next clip
-                  const nextClip = prev.layers
-                    .filter(l => l.track === 0 && l.start > nextTime)
-                    .sort((a,b) => a.start - b.start)[0];
-                  
-                  if (nextClip) return { ...prev, currentTime: nextClip.start };
-              }
-              */
-
               return { ...prev, currentTime: nextTime };
           });
           animationFrameRef.current = requestAnimationFrame(updateTime);
@@ -237,6 +237,8 @@ const App: React.FC = () => {
           name: "Lumina Sequence 01",
           date: new Date().toISOString(),
           duration: state.duration,
+          resolution: state.resolution,
+          fps: state.fps,
           filters: state.filters,
           layers: state.layers
       };
@@ -265,6 +267,8 @@ const App: React.FC = () => {
               setState(prev => ({
                   ...prev,
                   duration: projectData.duration || prev.duration,
+                  resolution: projectData.resolution || { width: 1920, height: 1080 },
+                  fps: projectData.fps || 30,
                   filters: projectData.filters || DEFAULT_FILTERS,
                   layers: projectData.layers.map(l => ({...l, isActive: true})),
                   selectedLayerId: null,
@@ -746,6 +750,16 @@ const App: React.FC = () => {
                 initialKey={getCookie('gemini_api_key') || ''}
             />
         )}
+        
+        {showSequenceSettings && (
+            <SequenceSettingsModal
+                onClose={() => setShowSequenceSettings(false)}
+                onSave={handleSaveSequenceSettings}
+                initialWidth={state.resolution.width}
+                initialHeight={state.resolution.height}
+                initialFps={state.fps}
+            />
+        )}
 
         <TopMenu 
             onImport={() => mediaImportRef.current?.click()}
@@ -756,6 +770,7 @@ const App: React.FC = () => {
             onDelete={() => handleDeleteLayer()}
             onRenameLayer={handleRenameLayer}
             onOpenSettings={() => setShowSettings(true)}
+            onOpenSequenceSettings={() => setShowSequenceSettings(true)}
             activePanel={state.activePanel}
             setActivePanel={(p) => setState(s => ({...s, activePanel: p}))}
         />
@@ -801,12 +816,22 @@ const App: React.FC = () => {
 
                      <div className="flex-1 flex items-center justify-center overflow-hidden bg-black relative" ref={monitorRef}>
                         {state.videoUrl ? (
-                            <div className="relative w-full h-full flex items-center justify-center">
+                            <div 
+                                className="relative flex items-center justify-center shadow-2xl" 
+                                style={{
+                                    aspectRatio: `${state.resolution.width} / ${state.resolution.height}`,
+                                    width: state.resolution.width >= state.resolution.height ? '100%' : 'auto',
+                                    height: state.resolution.height > state.resolution.width ? '100%' : 'auto',
+                                    maxWidth: '100%',
+                                    maxHeight: '100%'
+                                }}
+                            >
                                 {/* MAIN VIDEO ELEMENT (Handles Track 0) */}
+                                <div className="absolute inset-0 bg-black"></div>
                                 <video 
                                     ref={videoRef}
                                     src={state.videoUrl}
-                                    className={`max-w-full max-h-full pointer-events-none transition-opacity duration-75 ${activeVideoClip ? 'opacity-100' : 'opacity-0'}`} 
+                                    className={`w-full h-full object-contain pointer-events-none transition-opacity duration-75 ${activeVideoClip ? 'opacity-100' : 'opacity-0'}`} 
                                     style={{ filter: filterStyle }}
                                 />
                                 <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
