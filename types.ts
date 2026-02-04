@@ -7,6 +7,8 @@ export interface Transform3D {
   scale: number;
   translateX: number;
   translateY: number;
+  skewX?: number;
+  skewY?: number;
   perspective: number;
 }
 
@@ -149,6 +151,8 @@ export const DEFAULT_TRANSFORM: Transform3D = {
   scale: 100, // Normalized to 100% like Premiere
   translateX: 0,
   translateY: 0,
+  skewX: 0,
+  skewY: 0,
   perspective: 1000
 };
 

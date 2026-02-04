@@ -71,8 +71,9 @@ const App: React.FC = () => {
           case 'easeIn':
               ratio = ratio * ratio * ratio; // Cubic Ease In
               break;
-          case 'bezier': // Simulating Ease In Out
-              ratio = ratio < 0.5 ? 4 * ratio * ratio * ratio : 1 - Math.pow(-2 * ratio + 2, 3) / 2;
+          case 'bezier': // Simulating Ease In Out (Smoothstep/Bezier)
+              // Simple sigmoid-like approx for "Easy Ease"
+              ratio = ratio < 0.5 ? 2 * ratio * ratio : 1 - Math.pow(-2 * ratio + 2, 2) / 2;
               break;
           case 'linear':
           default:
@@ -332,7 +333,7 @@ const App: React.FC = () => {
       }
   };
 
-  // --- PROGRAM MONITOR INTERACTION (Fixed) ---
+  // --- PROGRAM MONITOR INTERACTION ---
   
   const handleOverlayMouseDown = (e: React.MouseEvent, layer: VideoSegment, type: 'move' | 'resize') => {
       e.stopPropagation(); // Stop bubbling to container
@@ -355,23 +356,6 @@ const App: React.FC = () => {
           ev.preventDefault();
           const deltaX = ev.clientX - startX;
           const deltaY = ev.clientY - startY;
-
-          // Helper to update value (keyframe or static)
-          const updateValue = (prop: string, newValue: number, staticUpdate: any) => {
-              if (hasKeyframes(prop)) {
-                  // If animating, update/add keyframe at current time
-                  const localTime = state.currentTime - layer.start;
-                  const newKeys = [...layer.animations.filter(k => k.property !== prop || Math.abs(k.time - localTime) > 0.05), {
-                      property: prop,
-                      time: localTime,
-                      value: newValue,
-                      easing: 'linear' as const
-                  }];
-                  updateLayer(layer.id, { animations: newKeys });
-              } else {
-                  updateLayer(layer.id, { transform: { ...layer.transform, ...staticUpdate } });
-              }
-          };
 
           if (type === 'move') {
               const newX = currentX + deltaX;
@@ -456,7 +440,7 @@ const App: React.FC = () => {
             // inset(0 0 0 0) is visible. inset(0 100% 0 0) is hidden from right.
             let clipPathString = '';
             if (wipeProgress > 0) {
-                clipPathString = `inset(0 ${100 - wipeProgress}% 0 0)`;
+                clipPathString = `inset(0 ${Math.min(100, wipeProgress)}% 0 0)`;
             }
 
             // Base style for content
@@ -488,7 +472,7 @@ const App: React.FC = () => {
                     // Typewriter Effect Logic
                     let displayContent = layer.content;
                     if (textProgress < 100) {
-                        const len = Math.floor(layer.content.length * (textProgress / 100));
+                        const len = Math.floor(layer.content.length * (Math.max(0, textProgress) / 100));
                         displayContent = layer.content.substring(0, len);
                     }
 

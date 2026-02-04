@@ -4,7 +4,7 @@ import {
     Palette, User, Bot, Send, Link as LinkIcon, 
     Clock, Search, FolderOpen, Film, Image as ImageIcon,
     SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2, FileBox, File,
-    Diamond, StopCircle, MoveRight, Expand, AlignLeft, ScanLine
+    Diamond, StopCircle, MoveRight, Expand, AlignLeft, ScanLine, Ghost
 } from 'lucide-react';
 import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage, PRESETS, LuminaPreset } from '../types';
 
@@ -129,7 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // --- AUTOMATED PRESETS (Motion Graphics) ---
-  const applyMotionPreset = (type: 'zoomIn' | 'slideIn' | 'typewriter' | 'wipe' | 'twist') => {
+  const applyMotionPreset = (type: 'zoomIn' | 'slideUp' | 'fadeIn' | 'typewriter' | 'wipe' | 'twist') => {
       if (!selectedLayer) return;
       
       const startTime = currentTime - selectedLayer.start;
@@ -138,26 +138,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       let newKeys = [...selectedLayer.animations];
 
-      // Helper to add a pair of keys
+      // Helper to add a pair of keys with Ease In/Out (Bezier)
       const addKeys = (prop: string, startVal: number, endVal: number) => {
-          // Remove existing keys in this range for this prop to avoid conflicts
+           // Remove existing keys in this range for this prop to avoid conflicts
            newKeys = newKeys.filter(k => k.property !== prop);
            newKeys.push({ property: prop, time: startTime, value: startVal, easing: 'bezier' });
            newKeys.push({ property: prop, time: endTime, value: endVal, easing: 'bezier' });
       };
 
       if (type === 'zoomIn') {
+          // Scale 0 -> 100
           addKeys('transform.scale', 0, 100);
           addKeys('opacity', 0, 1);
-      } else if (type === 'slideIn') {
-          addKeys('transform.translateY', 100, 0);
+      } else if (type === 'slideUp') {
+          // Y Offset +100 -> 0
+          addKeys('transform.translateY', 150, 0);
+          addKeys('opacity', 0, 1);
+      } else if (type === 'fadeIn') {
+          // Opacity 0 -> 1
           addKeys('opacity', 0, 1);
       } else if (type === 'typewriter') {
+          // Text Progress 0 -> 100
           addKeys('text.progress', 0, 100);
       } else if (type === 'wipe') {
           // Linear Wipe: 0 to 100% visible
-          addKeys('effects.wipe', 0, 100);
+          addKeys('effects.wipe', 100, 0);
       } else if (type === 'twist') {
+          // Twist/Distortion: Skew + Scale + Blur
           addKeys('transform.skewX', 45, 0);
           addKeys('transform.scale', 80, 100);
           addKeys('effects.blur', 10, 0); // Motion Blur sim
@@ -494,6 +501,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             )}
                              {/* New Advanced Props */}
                              {renderPropertyRow(
+                                "Skew X", 
+                                getPropertyValue(selectedLayer, 'transform.skewX', 0), 
+                                (v) => handlePropertyChange('transform.skewX', v, { skewX: v }), -90, 90, '°', 'transform.skewX'
+                            )}
+                             {renderPropertyRow(
                                 "Blur", 
                                 getPropertyValue(selectedLayer, 'effects.blur', 0), 
                                 (v) => handlePropertyChange('effects.blur', v, {}), 0, 50, 'px', 'effects.blur'
@@ -576,7 +588,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="space-y-4">
                     {/* Motion Presets UI */}
                     <div className="bg-[#232323] p-2 rounded border border-[#333]">
-                        <span className="block text-gray-400 font-bold mb-2 text-[10px] uppercase">Motion Presets</span>
+                        <span className="block text-gray-400 font-bold mb-2 text-[10px] uppercase">Motion Presets (Easy Ease)</span>
                         <div className="grid grid-cols-3 gap-2">
                              <button onClick={() => applyMotionPreset('typewriter')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
                                 <AlignLeft className="w-4 h-4 text-blue-400"/>
@@ -586,8 +598,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 <Expand className="w-4 h-4 text-green-400"/>
                                 <span className="text-[9px] text-gray-300">Zoom In</span>
                              </button>
-                             <button onClick={() => applyMotionPreset('slideIn')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
-                                <MoveRight className="w-4 h-4 text-purple-400"/>
+                             <button onClick={() => applyMotionPreset('slideUp')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <MoveRight className="w-4 h-4 text-purple-400 rotate-90"/>
                                 <span className="text-[9px] text-gray-300">Slide Up</span>
                              </button>
                              <button onClick={() => applyMotionPreset('wipe')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
@@ -597,6 +609,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                              <button onClick={() => applyMotionPreset('twist')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
                                 <Wand2 className="w-4 h-4 text-pink-400"/>
                                 <span className="text-[9px] text-gray-300">Twist</span>
+                             </button>
+                             <button onClick={() => applyMotionPreset('fadeIn')} className="flex flex-col items-center gap-1 p-2 bg-[#121212] hover:bg-blue-900 rounded border border-[#2a2a2a] transition-colors">
+                                <Ghost className="w-4 h-4 text-gray-400"/>
+                                <span className="text-[9px] text-gray-300">Fade In</span>
                              </button>
                         </div>
                     </div>
