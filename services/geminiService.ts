@@ -10,7 +10,7 @@ const getAI = () => {
     if (aiInstance) return aiInstance;
     try {
         // Initialize with the API Key from the shimmed process.env
-        aiInstance = new GoogleGenAI({ apiKey: "AIzaSyDbCcx-S34kH88fOFdPy8x4yU-PK8cGQvs" });
+        aiInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
     } catch (e) {
         console.error("Failed to initialize GoogleGenAI. Check API Key and SDK version.", e);
         return null;
