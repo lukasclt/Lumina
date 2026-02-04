@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, FunctionDeclaration, Type, Tool } from "@google/genai";
 import { VideoSegment, VideoFilter, ChatMessage } from "../types";
 
 const API_KEY = "AIzaSyDbCcx-S34kH88fOFdPy8x4yU-PK8cGQvs";
@@ -7,7 +7,6 @@ let aiInstance: GoogleGenAI | null = null;
 
 const getAI = () => {
     if (aiInstance) return aiInstance;
-    
     try {
         aiInstance = new GoogleGenAI({ apiKey: API_KEY });
     } catch (e) {
@@ -17,55 +16,61 @@ const getAI = () => {
     return aiInstance;
 };
 
-// Helper to convert File to Gemini-compatible Part
+// --- Agent Tools Definitions ---
+
+const cutVideoTool: FunctionDeclaration = {
+    name: "auto_cut_video",
+    description: "Analyzes the video content and automatically cuts/trims it to keep the most interesting 3-5 segments.",
+    parameters: { type: Type.OBJECT, properties: {}, required: [] }
+};
+
+const motionGraphicTool: FunctionDeclaration = {
+    name: "create_motion_graphic",
+    description: "Creates a professional motion graphic layer (text or shape) with After Effects style animations.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            text: { type: Type.STRING, description: "The text content to display." },
+            style: { 
+                type: Type.STRING, 
+                enum: ["cyberpunk_neon", "minimal_fade", "kinetic_typography", "3d_tumble", "glitch_impact"],
+                description: "The visual style and animation preset."
+            },
+            position: { type: Type.STRING, enum: ["center", "bottom_thirds", "top_header"] }
+        },
+        required: ["text", "style"]
+    }
+};
+
+const colorGradeTool: FunctionDeclaration = {
+    name: "apply_cinematic_grade",
+    description: "Applies a cinematic color grading filter to the entire video.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            mood: { 
+                type: Type.STRING, 
+                enum: ["dramatic_noir", "vibrant_vlog", "vintage_film", "matrix_green", "warm_sunset"],
+                description: "The desired mood or atmosphere." 
+            }
+        },
+        required: ["mood"]
+    }
+};
+
+// --- Service Functions ---
+
 const fileToGenerativePart = async (file: File): Promise<{ inlineData: { data: string; mimeType: string } }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = reader.result as string;
-      // Handle both data URL formats (with/without base64 prefix)
       const base64Data = result.includes(',') ? result.split(',')[1] : result;
-      resolve({
-        inlineData: {
-          data: base64Data,
-          mimeType: file.type
-        }
-      });
+      resolve({ inlineData: { data: base64Data, mimeType: file.type } });
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-};
-
-const scrapeUrlToText = async (url: string): Promise<string> => {
-    const ai = getAI();
-    if (!ai) return "AI Service Unavailable";
-
-    const isYoutube = url.includes('youtube.com') || url.includes('youtu.be');
-    
-    const prompt = `
-      The user provided this URL: ${url}.
-      ${isYoutube ? "It appears to be a YouTube video." : "It appears to be a website."}
-      
-      Task:
-      1. Pretend you have accessed this content.
-      2. Analyze the visual style, editing pace, color grading, and vibe.
-      3. Convert this "visual" content into a descriptive TEXT summary.
-      4. Suggest how to apply this style to a video project.
-      
-      Return a concise paragraph starting with "ANALYSIS OF [URL]: ..."
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: { parts: [{ text: prompt }] }
-        });
-        return response.text || "Could not analyze URL.";
-    } catch (e) {
-        console.error("Gemini Scraping Error:", e);
-        return "Error analyzing URL.";
-    }
 };
 
 export const analyzeVideoForCuts = async (file: File, duration: number): Promise<VideoSegment[]> => {
@@ -73,33 +78,20 @@ export const analyzeVideoForCuts = async (file: File, duration: number): Promise
   if (!ai) throw new Error("AI Service not configured");
 
   const videoPart = await fileToGenerativePart(file);
-
   const prompt = `
-    Analyze this video content. 
-    I want to create a dynamic edit. 
-    Identify the 3 to 5 most interesting or active segments to keep.
-    The total video duration is ${duration} seconds.
-    Return a JSON object with a list of segments.
-    Output format: { "segments": [{ "start": 0, "end": 10, "label": "Opening scene" }] }
+    Analyze this video. Identify the 3-5 best segments for a dynamic social media edit.
+    Total duration: ${duration}s.
+    Return JSON: { "segments": [{ "start": number, "end": number, "label": string }] }
   `;
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-latest",
-      contents: {
-        parts: [
-          { text: prompt },
-          videoPart
-        ]
-      },
-      config: {
-          responseMimeType: "application/json"
-      }
+      contents: { parts: [{ text: prompt }, videoPart] },
+      config: { responseMimeType: "application/json" }
     });
 
-    const jsonStr = response.text?.trim() || "{}";
-    const json = JSON.parse(jsonStr);
-
+    const json = JSON.parse(response.text?.trim() || "{}");
     if (json.segments) {
       return json.segments.map((seg: any, index: number) => ({
         id: `seg-${index}-${Date.now()}`,
@@ -108,12 +100,13 @@ export const analyzeVideoForCuts = async (file: File, duration: number): Promise
         label: seg.label,
         isActive: true,
         type: 'video',
+        track: 0,
         transform: { rotateX: 0, rotateY: 0, rotateZ: 0, scale: 1, translateX: 0, translateY: 0, perspective: 1000 },
-        track: 0
+        opacity: 1,
+        animations: []
       }));
     }
     return [];
-
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
     throw error;
@@ -123,77 +116,73 @@ export const analyzeVideoForCuts = async (file: File, duration: number): Promise
 export const chatWithAI = async (
   history: ChatMessage[], 
   currentContext: { filters: VideoFilter, duration: number }
-): Promise<{ text: string, commands: any[] }> => {
+): Promise<{ 
+    text: string; 
+    toolCalls: any[]; 
+    sources?: { uri: string; title: string }[] 
+}> => {
   const ai = getAI();
-  if (!ai) return { text: "AI is not configured (Missing API Key).", commands: [] };
-
-  const lastMsg = history[history.length - 1];
-  let scrapedContent = "";
-  
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const urls = lastMsg.content.match(urlRegex);
-
-  if (urls && urls.length > 0) {
-      scrapedContent = await scrapeUrlToText(urls[0]);
-  }
+  if (!ai) return { text: "AI Service Unavailable", toolCalls: [] };
 
   const systemInstruction = `
-    You are Lumina AI, an elite video editor assistant.
+    You are Lumina AI, an expert Motion Graphics Designer and Video Editor Agent.
     
     **Capabilities**:
-    1. **Memory**: Remember context from the chat.
-    2. **Summarization**: Provide bulleted lists when asked to summarize.
-    3. **Content Analysis**: ${scrapedContent ? `URL Provided. ANALYSIS: "${scrapedContent}". Use this style for the project.` : "Analyze provided URLs for style."}
-    4. **Google/YouTube Knowledge**: Recall popular YouTuber styles.
-    5. **Asset Generation**: Add assets via commands.
+    1. **Search & Research**: Use Google Search to find trends, styles, or information (e.g., "What is the editing style of MrBeast?").
+    2. **Auto-Cut**: Analyze and cut videos intelligently.
+    3. **Motion Design**: Create complex animations (text, shapes) similar to After Effects.
+    4. **Color Grading**: Apply cinematic filters.
 
-    **Current Project Context**:
-    Duration: ${currentContext.duration}s.
-    Filters: ${JSON.stringify(currentContext.filters)}.
-
-    **Action Protocol**:
-    To perform an action, include a strict JSON tag in your response:
-    [CMD: {"type": "add_layer", "layerType": "image", "query": "cats"}]
-    [CMD: {"type": "add_layer", "layerType": "audio", "category": "music", "query": "lofi hip hop", "copyright_check": "royalty_free"}]
-    [CMD: {"type": "apply_filter", "filter": {"contrast": 120, "saturate": 130}}]
-    
-    Respond naturally.
+    **Behavior**:
+    - If the user asks for a style or info, SEARCH first.
+    - If the user wants to "cut" or "trim", use 'auto_cut_video'.
+    - If the user wants text, titles, or effects, use 'create_motion_graphic'.
+    - Always sound professional yet helpful.
   `;
 
-  const previousHistory = history.slice(0, -1).map(msg => ({
+  const previousHistory = history.map(msg => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
   }));
 
+  const toolsConfig: Tool[] = [
+      { googleSearch: {} },
+      { functionDeclarations: [cutVideoTool, motionGraphicTool, colorGradeTool] }
+  ];
+
   try {
-    const chat = ai.chats.create({
-        model: "gemini-3-flash-preview",
-        history: previousHistory,
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-latest",
+        contents: [
+            ...previousHistory.map(h => ({ role: h.role, parts: h.parts })),
+            { role: 'user', parts: [{ text: history[history.length - 1].content }] }
+        ],
         config: {
-            systemInstruction: systemInstruction
+            systemInstruction: systemInstruction,
+            tools: toolsConfig
         }
     });
 
-    const response = await chat.sendMessage({ message: lastMsg.content });
-    const content = response.text || "";
+    const candidate = response.candidates?.[0];
+    const text = candidate?.content?.parts?.find(p => p.text)?.text || "";
     
-    const commands: any[] = [];
-    const commandRegex = /\[CMD:\s*({.*?})\]/g;
-    let match;
-    while ((match = commandRegex.exec(content)) !== null) {
-        try {
-            commands.push(JSON.parse(match[1]));
-        } catch (e) {
-            console.error("Failed to parse command JSON", e);
-        }
-    }
+    // Extract Function Calls
+    const toolCalls = candidate?.content?.parts
+        ?.filter(p => p.functionCall)
+        .map(p => ({
+            name: p.functionCall?.name,
+            args: p.functionCall?.args
+        })) || [];
 
-    const cleanText = content.replace(commandRegex, "").trim();
+    // Extract Grounding (Search) Sources
+    const sources = candidate?.groundingMetadata?.groundingChunks
+        ?.map((c: any) => c.web ? { uri: c.web.uri, title: c.web.title } : null)
+        .filter(Boolean) || [];
 
-    return { text: cleanText, commands };
+    return { text, toolCalls, sources };
 
   } catch (error) {
-    console.error("Gemini Chat Error:", error);
-    throw error;
+    console.error("Gemini Agent Error:", error);
+    return { text: "I encountered an error processing your request.", toolCalls: [] };
   }
 };

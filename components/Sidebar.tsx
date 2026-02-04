@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, Type, MessageSquare, Box, Layers, Settings, Palette, User, Bot, Send } from 'lucide-react';
+import { Sparkles, Type, MessageSquare, Box, Layers, Settings, Palette, User, Bot, Send, Link as LinkIcon } from 'lucide-react';
 import { Tab, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage } from '../types';
 
 interface SidebarProps {
@@ -229,25 +229,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
                {chatHistory.length === 0 && (
                   <div className="text-center text-gray-600 mt-10 p-4">
                     <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-30"/>
-                    <h3 className="text-sm font-semibold text-gray-400">AI Assistant Ready</h3>
-                    <p className="text-[10px] mt-2">Try asking:</p>
+                    <h3 className="text-sm font-semibold text-gray-400">AI Motion Agent</h3>
+                    <p className="text-[10px] mt-2">Capabilities:</p>
                     <ul className="text-[10px] space-y-1 mt-2 opacity-70">
-                        <li>"Add a cinematic image of a city"</li>
-                        <li>"Make the video look like a movie"</li>
-                        <li>"Add some upbeat royalty-free music"</li>
-                        <li>"What is MrBeast's editing style?"</li>
+                        <li>"Search for cyberpunk editing trends"</li>
+                        <li>"Auto-cut this video for TikTok"</li>
+                        <li>"Add a neon text intro"</li>
+                        <li>"Make it look cinematic (Matrix style)"</li>
                     </ul>
                   </div>
                )}
                
                {chatHistory.map((msg, i) => (
-                   <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                       <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${msg.role === 'user' ? 'bg-purple-600' : 'bg-blue-600'}`}>
-                           {msg.role === 'user' ? <User className="w-4 h-4 text-white"/> : <Bot className="w-4 h-4 text-white"/>}
+                   <div key={i} className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                       <div className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                            <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${msg.role === 'user' ? 'bg-purple-600' : 'bg-blue-600'}`}>
+                                {msg.role === 'user' ? <User className="w-4 h-4 text-white"/> : <Bot className="w-4 h-4 text-white"/>}
+                            </div>
+                            <div className={`max-w-[240px] rounded-2xl px-4 py-2 text-xs leading-relaxed ${msg.role === 'user' ? 'bg-purple-900/50 text-white rounded-tr-none' : 'bg-[#2a2a2a] text-gray-200 rounded-tl-none border border-[#333]'}`}>
+                                {msg.content}
+                            </div>
                        </div>
-                       <div className={`max-w-[80%] rounded-2xl px-4 py-2 text-xs leading-relaxed ${msg.role === 'user' ? 'bg-purple-900/50 text-white rounded-tr-none' : 'bg-[#2a2a2a] text-gray-200 rounded-tl-none border border-[#333]'}`}>
-                           {msg.content}
-                       </div>
+                       
+                       {/* Sources / Citations */}
+                       {msg.sources && msg.sources.length > 0 && (
+                           <div className="ml-12 max-w-[240px] flex flex-wrap gap-2">
+                               {msg.sources.map((src, idx) => (
+                                   <a 
+                                     key={idx} 
+                                     href={src.uri} 
+                                     target="_blank" 
+                                     rel="noopener noreferrer"
+                                     className="flex items-center gap-1 bg-[#121212] border border-[#333] rounded px-2 py-1 text-[10px] text-gray-400 hover:text-blue-400 hover:border-blue-500 transition-colors"
+                                   >
+                                       <LinkIcon className="w-2 h-2"/>
+                                       <span className="truncate max-w-[100px]">{src.title}</span>
+                                   </a>
+                               ))}
+                           </div>
+                       )}
                    </div>
                ))}
                
@@ -272,7 +292,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     type="text" 
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Message Lumina AI..."
+                    placeholder="Ask Lumina Agent..."
                     className="w-full bg-[#121212] border border-[#333] text-white text-xs rounded-full pl-4 pr-10 py-3 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                 />
                 <button 

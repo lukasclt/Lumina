@@ -10,6 +10,15 @@ export interface Transform3D {
   perspective: number;
 }
 
+export interface AnimationKeyframe {
+  property: keyof Transform3D | 'opacity';
+  startValue: number;
+  endValue: number;
+  startTime: number; // relative to layer start (seconds)
+  duration: number; // seconds
+  easing: 'linear' | 'easeOut' | 'elastic';
+}
+
 export interface VideoSegment {
   id: string;
   type: LayerType;
@@ -24,8 +33,12 @@ export interface VideoSegment {
     fontSize?: number;
     color?: string;
     backgroundColor?: string;
+    textShadow?: string;
+    className?: string; // For special effects like neon/glitch
   };
   transform: Transform3D;
+  opacity: number;
+  animations: AnimationKeyframe[];
   isActive: boolean;
 }
 
@@ -43,6 +56,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  sources?: { uri: string; title: string }[];
 }
 
 export interface EditingState {

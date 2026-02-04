@@ -3,8 +3,8 @@ import { Upload, Play, Pause, Download, Settings, FileImage, FileVideo, Video } 
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { ToolsBar } from './components/ToolsBar';
-import { EditingState, Tab, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage } from './types';
-import { chatWithAI } from './services/geminiService';
+import { EditingState, Tab, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe } from './types';
+import { chatWithAI, analyzeVideoForCuts } from './services/geminiService';
 
 const App: React.FC = () => {
   const [state, setState] = useState<EditingState>({
@@ -31,34 +31,19 @@ const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const animationFrameRef = useRef<number>();
 
-  // Persistence: Load Chat History on Mount
   useEffect(() => {
     const savedHistory = localStorage.getItem('lumina_chat_history');
     if (savedHistory) {
         try {
             const parsed = JSON.parse(savedHistory);
             setState(prev => ({ ...prev, chatHistory: parsed }));
-        } catch (e) {
-            console.error("Failed to load chat history", e);
-        }
+        } catch (e) { console.error("Failed to load chat history", e); }
     }
   }, []);
 
-  // Persistence: Save Chat History on Change
   useEffect(() => {
     localStorage.setItem('lumina_chat_history', JSON.stringify(state.chatHistory));
   }, [state.chatHistory]);
-
-  useEffect(() => {
-    return () => {
-      if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
-      state.layers.forEach(l => {
-          if ((l.type === 'image' || l.type === 'video') && l.src && l.src.startsWith('blob:')) {
-              URL.revokeObjectURL(l.src);
-          }
-      });
-    };
-  }, []);
 
   const updateTime = () => {
     if (videoRef.current) {
@@ -108,6 +93,8 @@ const App: React.FC = () => {
                 label: file.name,
                 src: url,
                 transform: DEFAULT_TRANSFORM,
+                opacity: 1,
+                animations: [],
                 isActive: true
             }],
             filters: DEFAULT_FILTERS
@@ -122,6 +109,8 @@ const App: React.FC = () => {
             label: file.name,
             src: url,
             transform: DEFAULT_TRANSFORM,
+            opacity: 1,
+            animations: [],
             isActive: true
         };
         setState(prev => ({
@@ -144,10 +133,13 @@ const App: React.FC = () => {
           content: 'Lumina Text',
           style: {
               fontFamily: 'Inter',
-              fontSize: 48,
+              fontSize: 60,
               color: '#ffffff',
+              textShadow: '0 4px 6px rgba(0,0,0,0.5)'
           },
           transform: DEFAULT_TRANSFORM,
+          opacity: 1,
+          animations: [],
           isActive: true
       };
       setState(prev => ({
@@ -185,8 +177,8 @@ const App: React.FC = () => {
       }));
   };
 
+  // --- AI Agent Handler ---
   const handleAIChat = async (msg: string) => {
-    // Optimistic Update
     const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: Date.now() };
     setState(prev => ({ 
         ...prev, 
@@ -195,48 +187,108 @@ const App: React.FC = () => {
     }));
 
     try {
-      const response = await chatWithAI(
+      const result = await chatWithAI(
           [...state.chatHistory, userMsg], 
           { filters: state.filters, duration: state.duration }
       );
 
-      // Handle AI Commands
-      if (response.commands && response.commands.length > 0) {
-          response.commands.forEach(cmd => {
-              if (cmd.type === 'add_layer') {
-                  // Simulate finding a resource
-                  let src = '';
-                  let label = cmd.query || 'AI Asset';
-                  let layerType: LayerType = cmd.layerType;
+      // Execute Tool Calls
+      if (result.toolCalls && result.toolCalls.length > 0) {
+        for (const tool of result.toolCalls) {
+            
+            // 1. Auto Cut Video
+            if (tool.name === "auto_cut_video" && state.file) {
+                const segments = await analyzeVideoForCuts(state.file, state.duration);
+                if (segments.length > 0) {
+                     setState(prev => ({
+                        ...prev,
+                        layers: [
+                            ...segments, // New Video segments
+                            ...prev.layers.filter(l => l.track !== 0) // Keep other layers
+                        ]
+                     }));
+                }
+            }
 
-                  if (layerType === 'image') {
-                      src = `https://picsum.photos/seed/${cmd.query}/800/450`; // Placeholder service
-                  } else if (layerType === 'audio') {
-                      // Placeholder audio
-                      src = ''; 
-                      label = `Audio: ${cmd.query} (${cmd.copyright_check || 'Unknown'})`;
-                  }
+            // 2. Motion Graphics (Agent Design)
+            if (tool.name === "create_motion_graphic") {
+                const { text, style, position } = tool.args;
+                
+                // Construct Animation Keyframes based on Style
+                const animations: AnimationKeyframe[] = [];
+                let startScale = 1;
+                let startY = 0;
+                let opacityStart = 0;
+                let transform = { ...DEFAULT_TRANSFORM };
+                let textColor = '#ffffff';
+                let textShadow = '0 2px 10px rgba(0,0,0,0.5)';
 
-                  const newLayer: VideoSegment = {
-                      id: `ai-${Date.now()}-${Math.random()}`,
-                      type: layerType,
-                      track: layerType === 'audio' ? -1 : 1, // -1 for audio track simulation
-                      start: state.currentTime,
-                      duration: 5,
-                      label: label,
-                      src: src,
-                      transform: DEFAULT_TRANSFORM,
-                      isActive: true
-                  };
-                  setState(prev => ({ ...prev, layers: [...prev.layers, newLayer] }));
-              }
-              if (cmd.type === 'apply_filter') {
-                  setState(prev => ({ ...prev, filters: { ...prev.filters, ...cmd.filter }}));
-              }
-          });
+                if (style === "cyberpunk_neon") {
+                    textColor = '#00ffcc';
+                    textShadow = '0 0 10px #00ffcc, 0 0 20px #00ffcc, 0 0 40px #00ffcc';
+                    animations.push({ property: 'scale', startValue: 0.8, endValue: 1.2, startTime: 0, duration: 0.5, easing: 'elastic' });
+                    animations.push({ property: 'opacity', startValue: 0, endValue: 1, startTime: 0, duration: 0.3, easing: 'linear' });
+                } else if (style === "minimal_fade") {
+                    transform.translateY = 50;
+                    animations.push({ property: 'translateY', startValue: 50, endValue: 0, startTime: 0, duration: 1.5, easing: 'easeOut' });
+                    animations.push({ property: 'opacity', startValue: 0, endValue: 1, startTime: 0, duration: 1.5, easing: 'linear' });
+                } else if (style === "kinetic_typography") {
+                     transform.scale = 3;
+                     animations.push({ property: 'scale', startValue: 3, endValue: 1, startTime: 0, duration: 0.4, easing: 'easeOut' });
+                     animations.push({ property: 'rotateZ', startValue: -15, endValue: 0, startTime: 0, duration: 0.5, easing: 'elastic' });
+                } else if (style === "3d_tumble") {
+                     transform.rotateX = 90;
+                     animations.push({ property: 'rotateX', startValue: 90, endValue: 0, startTime: 0, duration: 1, easing: 'easeOut' });
+                }
+
+                // Position Logic
+                if (position === "bottom_thirds") transform.translateY = 300;
+                if (position === "top_header") transform.translateY = -300;
+
+                const newLayer: VideoSegment = {
+                    id: `ai-motion-${Date.now()}`,
+                    type: 'text',
+                    track: 2,
+                    start: state.currentTime,
+                    duration: 4,
+                    label: `AI: ${text}`,
+                    content: text,
+                    style: {
+                        fontFamily: 'Montserrat',
+                        fontSize: 80,
+                        color: textColor,
+                        textShadow: textShadow,
+                    },
+                    transform: transform,
+                    opacity: 1,
+                    animations: animations,
+                    isActive: true
+                };
+                setState(prev => ({ ...prev, layers: [...prev.layers, newLayer] }));
+            }
+
+            // 3. Color Grading
+            if (tool.name === "apply_cinematic_grade") {
+                const { mood } = tool.args;
+                let newFilters = { ...DEFAULT_FILTERS };
+                if (mood === "dramatic_noir") newFilters = { ...DEFAULT_FILTERS, grayscale: 100, contrast: 130, brightness: 90 };
+                if (mood === "vibrant_vlog") newFilters = { ...DEFAULT_FILTERS, saturate: 150, contrast: 110, brightness: 105 };
+                if (mood === "vintage_film") newFilters = { ...DEFAULT_FILTERS, sepia: 60, contrast: 90, blur: 0.5 };
+                if (mood === "matrix_green") newFilters = { ...DEFAULT_FILTERS, hueRotate: 90, contrast: 120, saturate: 80 };
+                if (mood === "warm_sunset") newFilters = { ...DEFAULT_FILTERS, sepia: 30, hueRotate: -10, saturate: 120 };
+
+                setState(prev => ({ ...prev, filters: newFilters }));
+            }
+        }
       }
 
-      const aiMsg: ChatMessage = { role: 'assistant', content: response.text, timestamp: Date.now() };
+      const aiMsg: ChatMessage = { 
+          role: 'assistant', 
+          content: result.text || (result.toolCalls.length > 0 ? "Actions executed successfully." : "I processed that."), 
+          timestamp: Date.now(),
+          sources: result.sources
+      };
+      
       setState(prev => ({ 
         ...prev, 
         chatHistory: [...prev.chatHistory, aiMsg],
@@ -245,9 +297,40 @@ const App: React.FC = () => {
 
     } catch (error) {
       console.error(error);
-      const errorMsg: ChatMessage = { role: 'assistant', content: "Sorry, I encountered an error connecting to the brain.", timestamp: Date.now() };
+      const errorMsg: ChatMessage = { role: 'assistant', content: "I encountered an error connecting to my creative brain.", timestamp: Date.now() };
       setState(prev => ({ ...prev, chatHistory: [...prev.chatHistory, errorMsg], isProcessing: false }));
     }
+  };
+
+  // --- Animation Interpolation Engine ---
+  const interpolate = (start: number, end: number, progress: number, easing: string) => {
+     // Simple easing implementation
+     let p = progress;
+     if (easing === 'easeOut') p = 1 - Math.pow(1 - progress, 3);
+     if (easing === 'elastic') { const c4 = (2 * Math.PI) / 3; p = progress === 0 ? 0 : progress === 1 ? 1 : Math.pow(2, -10 * progress) * Math.sin((progress * 10 - 0.75) * c4) + 1; }
+     return start + (end - start) * p;
+  };
+
+  const getAnimatedValue = (layer: VideoSegment, property: keyof VideoSegment['transform'] | 'opacity', baseValue: number) => {
+     if (!layer.animations) return baseValue;
+     
+     // Find active keyframe for this property
+     const relativeTime = state.currentTime - layer.start;
+     const anim = layer.animations.find(a => a.property === property && relativeTime >= a.startTime && relativeTime <= (a.startTime + a.duration));
+     
+     if (anim) {
+         const progress = (relativeTime - anim.startTime) / anim.duration;
+         return interpolate(anim.startValue, anim.endValue, Math.max(0, Math.min(1, progress)), anim.easing);
+     }
+     
+     // Check if we are past an animation (hold end value)
+     const pastAnim = layer.animations
+        .filter(a => a.property === property && relativeTime > (a.startTime + a.duration))
+        .sort((a, b) => b.startTime - a.startTime)[0];
+        
+     if (pastAnim) return pastAnim.endValue;
+
+     return baseValue;
   };
 
   const selectedLayer = state.layers.find(l => l.id === state.selectedLayerId);
@@ -257,20 +340,29 @@ const App: React.FC = () => {
         .filter(l => l.isActive && l.track > 0)
         .filter(l => state.currentTime >= l.start && state.currentTime <= (l.start + l.duration))
         .map(layer => {
-            const { transform } = layer;
+            const scale = getAnimatedValue(layer, 'scale', layer.transform.scale);
+            const rX = getAnimatedValue(layer, 'rotateX', layer.transform.rotateX);
+            const rY = getAnimatedValue(layer, 'rotateY', layer.transform.rotateY);
+            const rZ = getAnimatedValue(layer, 'rotateZ', layer.transform.rotateZ);
+            const tX = getAnimatedValue(layer, 'translateX', layer.transform.translateX);
+            const tY = getAnimatedValue(layer, 'translateY', layer.transform.translateY);
+            const opacity = getAnimatedValue(layer, 'opacity', layer.opacity);
+
             const style: React.CSSProperties = {
                 transform: `
-                    perspective(${transform.perspective}px)
-                    translate3d(${transform.translateX}px, ${transform.translateY}px, 0)
-                    rotateX(${transform.rotateX}deg)
-                    rotateY(${transform.rotateY}deg)
-                    rotateZ(${transform.rotateZ}deg)
-                    scale(${transform.scale})
+                    perspective(${layer.transform.perspective}px)
+                    translate3d(${tX}px, ${tY}px, 0)
+                    rotateX(${rX}deg)
+                    rotateY(${rY}deg)
+                    rotateZ(${rZ}deg)
+                    scale(${scale})
                 `,
+                opacity: opacity,
                 position: 'absolute',
                 top: '50%',
                 left: '50%',
-                marginTop: '-10%',
+                transformOrigin: 'center center',
+                marginTop: '-10%', // Centering hack for demo
                 marginLeft: '-10%',
                 pointerEvents: 'none',
             };
@@ -285,8 +377,10 @@ const App: React.FC = () => {
                         fontFamily: layer.style?.fontFamily,
                         fontSize: `${layer.style?.fontSize}px`,
                         color: layer.style?.color,
-                        textShadow: '0px 2px 4px rgba(0,0,0,0.5)',
-                        whiteSpace: 'nowrap'
+                        textShadow: layer.style?.textShadow,
+                        whiteSpace: 'nowrap',
+                        fontWeight: 800,
+                        letterSpacing: '0.05em'
                     }}>
                         {layer.content}
                     </div>
@@ -353,7 +447,7 @@ const App: React.FC = () => {
 
         <div className="flex-1 bg-[#0a0a0a] flex items-center justify-center p-8 relative overflow-hidden">
             {state.videoUrl ? (
-                <div className="relative shadow-2xl bg-black aspect-video h-[80%] max-w-full overflow-hidden">
+                <div className="relative shadow-2xl bg-black aspect-video h-[80%] max-w-full overflow-hidden group">
                     <video 
                         ref={videoRef}
                         src={state.videoUrl}
