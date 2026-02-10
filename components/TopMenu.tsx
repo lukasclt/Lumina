@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PanelType } from '../types';
-import { ChevronRight, Check } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 
 interface TopMenuProps {
   onImport: () => void;
@@ -18,6 +18,14 @@ interface TopMenuProps {
 }
 
 type MenuId = 'file' | 'edit' | 'clip' | 'sequence' | null;
+
+const MenuDropdown = ({ children }: { children?: React.ReactNode }) => (
+  <div className="absolute top-full left-0 mt-1 w-56 bg-[#1e1e1e] border border-[#333] shadow-xl rounded-sm py-1 z-50 flex flex-col">
+    {children}
+  </div>
+);
+
+const Separator = () => <div className="h-px bg-[#333] my-1 mx-2"></div>;
 
 export const TopMenu: React.FC<TopMenuProps> = ({
   onImport, onSave, onOpen, onExport,
@@ -47,12 +55,6 @@ export const TopMenu: React.FC<TopMenuProps> = ({
     setActiveMenu(null);
   };
 
-  const MenuDropdown = ({ children }: { children: React.ReactNode }) => (
-    <div className="absolute top-full left-0 mt-1 w-56 bg-[#1e1e1e] border border-[#333] shadow-xl rounded-sm py-1 z-50 flex flex-col">
-      {children}
-    </div>
-  );
-
   const MenuItem = ({ label, shortcut, onClick, disabled = false, hasSub = false }: { label: string, shortcut?: string, onClick?: () => void, disabled?: boolean, hasSub?: boolean }) => (
     <button 
       className={`px-4 py-1.5 text-left text-[11px] flex justify-between items-center hover:bg-blue-600 hover:text-white group ${disabled ? 'opacity-50 cursor-default hover:bg-transparent hover:text-gray-500' : 'text-gray-200'}`}
@@ -60,6 +62,9 @@ export const TopMenu: React.FC<TopMenuProps> = ({
         if (!disabled && onClick) {
           onClick();
           setActiveMenu(null);
+        } else if (!disabled && !onClick) {
+           // For items without specific actions, we might still want to close the menu
+           setActiveMenu(null);
         }
       }}
     >
@@ -70,8 +75,6 @@ export const TopMenu: React.FC<TopMenuProps> = ({
       </div>
     </button>
   );
-
-  const Separator = () => <div className="h-px bg-[#333] my-1 mx-2"></div>;
 
   // Determine active workspace visually
   const isEditing = activePanel === PanelType.PROJECT || activePanel === PanelType.ESSENTIAL_GRAPHICS;

@@ -14,10 +14,11 @@ const App: React.FC = () => {
   const [state, setState] = useState<EditingState>({
     file: null,
     videoUrl: null,
-    duration: 0,
+    duration: 60,
     resolution: { width: 1920, height: 1080 },
     fps: 30,
     currentTime: 0,
+    zoomLevel: 30, // Default 30px per second
     isPlaying: false,
     layers: [],
     selectedLayerId: null,
@@ -184,6 +185,7 @@ const App: React.FC = () => {
             
             const nextTime = prev.currentTime + delta;
             
+            // Loop or Stop? Let's stop for now.
             if (nextTime >= prev.duration) {
                 return { ...prev, isPlaying: false, currentTime: prev.duration };
             }
@@ -218,14 +220,14 @@ const App: React.FC = () => {
       );
 
       if (activeClip) {
-          // Calculate Offset inside the clip
-          const offset = state.currentTime - activeClip.start;
-          // Apply to source video (srcStartTime handles the "cut" part)
-          const sourceTime = (activeClip.srcStartTime || 0) + offset;
+          // Calculate Offset inside the clip relative to start
+          const timeSinceClipStart = state.currentTime - activeClip.start;
           
-          // Only seek if we are significantly off (prevent stutter)
-          // Tightened threshold for smoother cuts
-          if (Math.abs(videoRef.current.currentTime - sourceTime) > 0.2) {
+          // Map to source file time
+          const sourceTime = (activeClip.srcStartTime || 0) + timeSinceClipStart;
+          
+          // Only seek if we are significantly off (prevent stutter during playback)
+          if (Math.abs(videoRef.current.currentTime - sourceTime) > 0.25) {
               videoRef.current.currentTime = sourceTime;
           }
           
@@ -233,10 +235,14 @@ const App: React.FC = () => {
               videoRef.current.play().catch(e => { /* Ignore play interrupts */ });
           }
           if (!videoRef.current.paused && !state.isPlaying) videoRef.current.pause();
+          
+          // Ensure visual visibility
+          videoRef.current.style.opacity = '1';
 
       } else {
           // In a gap
            if (!videoRef.current.paused) videoRef.current.pause();
+           videoRef.current.style.opacity = '0'; // Hide video during gap
       }
 
   }, [state.currentTime, state.layers, state.isPlaying]);
@@ -373,7 +379,8 @@ const App: React.FC = () => {
                 ...prev,
                 file,
                 videoUrl: url,
-                duration: Math.max(prev.duration, videoElement.duration),
+                // If it's the first clip, set duration to video duration, else expand
+                duration: prev.layers.length === 0 ? videoElement.duration : Math.max(prev.duration, videoElement.duration),
                 layers: [...prev.layers, {
                     id: newId, type: 'video', track: 0, start: prev.currentTime, duration: videoElement.duration, 
                     srcStartTime: 0, // IMPORTANT: Initialize srcStartTime
@@ -406,23 +413,30 @@ const App: React.FC = () => {
       }));
   };
 
+  // Improved Razor Logic
   const handleRazor = (time: number, layerId: string) => {
       setState(prev => {
           const layerToSplit = prev.layers.find(l => l.id === layerId);
           if (!layerToSplit) return prev;
+          
+          // Only split if time is strictly inside
           if (time <= layerToSplit.start || time >= (layerToSplit.start + layerToSplit.duration)) return prev;
 
-          const splitRelative = time - layerToSplit.start;
+          const offsetIntoClip = time - layerToSplit.start;
+          
+          // First Half
           const firstPart = { 
               ...layerToSplit, 
-              duration: splitRelative 
+              duration: offsetIntoClip 
           };
+          
+          // Second Half
           const secondPart: VideoSegment = { 
               ...layerToSplit, 
               id: `${layerToSplit.id}-split-${Date.now()}`, 
               start: time, 
-              duration: layerToSplit.duration - splitRelative,
-              srcStartTime: (layerToSplit.srcStartTime || 0) + splitRelative // Adjust source time for 2nd part
+              duration: layerToSplit.duration - offsetIntoClip,
+              srcStartTime: (layerToSplit.srcStartTime || 0) + offsetIntoClip // Math for keeping sync
           };
 
           return {
@@ -885,6 +899,8 @@ const App: React.FC = () => {
                         <Timeline 
                             duration={state.duration || 60}
                             currentTime={state.currentTime}
+                            zoomLevel={state.zoomLevel}
+                            setZoomLevel={(z) => setState(s => ({...s, zoomLevel: z}))}
                             layers={state.layers}
                             selectedLayerId={state.selectedLayerId}
                             onSeek={(t) => {

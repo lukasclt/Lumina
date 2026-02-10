@@ -108,6 +108,7 @@ export interface EditingState {
   resolution: { width: number; height: number };
   fps: number;
   currentTime: number;
+  zoomLevel: number; // New: Pixels per Second
   isPlaying: boolean;
   layers: VideoSegment[];
   selectedLayerId: string | null;
