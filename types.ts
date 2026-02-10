@@ -28,12 +28,22 @@ export interface VideoEffect {
   enabled: boolean;
 }
 
+// New Interface for Track Management
+export interface Track {
+    id: number; // The numeric index (0, 1, 2...)
+    type: 'video' | 'audio';
+    label: string;
+    isMuted: boolean;
+    isLocked: boolean;
+    isHidden: boolean; // For video
+}
+
 export interface VideoSegment {
   id: string;
   type: LayerType;
   start: number; // in seconds (timeline position)
   duration: number; // in seconds
-  track: number; // 0, 1, 2 (Vertical stacking)
+  track: number; // Corresponds to Track.id
   label: string;
   src?: string; // For images/video/audio
   srcStartTime?: number; // Where in the source file this clip begins (For cuts)
@@ -92,12 +102,21 @@ export interface ProjectFile {
     fps?: number;
     filters: VideoFilter;
     layers: VideoSegment[];
+    tracks: Track[]; // Added tracks to project file
+}
+
+export interface ChatAttachment {
+    type: 'image' | 'video' | 'text';
+    url: string; // Base64 or Blob URL
+    base64?: string; // Raw base64 for Gemini
+    mimeType?: string;
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  attachments?: ChatAttachment[];
   sources?: { uri: string; title: string }[];
 }
 
@@ -110,7 +129,10 @@ export interface EditingState {
   currentTime: number;
   zoomLevel: number; // New: Pixels per Second
   isPlaying: boolean;
+  
+  tracks: Track[]; // Dynamic Track Management
   layers: VideoSegment[];
+  
   selectedLayerId: string | null;
   filters: VideoFilter; // Global Lumetri (or Adjustment Layer logic)
   isProcessing: boolean;

@@ -4,9 +4,9 @@ import {
     Palette, User, Bot, Send, Link as LinkIcon, 
     Clock, Search, FolderOpen, Film, Image as ImageIcon,
     SlidersHorizontal, Eye, EyeOff, Plus, PlayCircle, Folder, ChevronRight, ChevronDown, Music, Wand2, FileBox, File,
-    Diamond, StopCircle, MoveRight, Expand, AlignLeft, ScanLine, Ghost
+    Diamond, StopCircle, MoveRight, Expand, AlignLeft, ScanLine, Ghost, Paperclip, X
 } from 'lucide-react';
-import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage, PRESETS, LuminaPreset } from '../types';
+import { PanelType, VideoFilter, VideoSegment, Transform3D, GOOGLE_FONTS, ChatMessage, PRESETS, LuminaPreset, ChatAttachment } from '../types';
 
 interface SidebarProps {
   activePanel: PanelType;
@@ -15,7 +15,7 @@ interface SidebarProps {
   setFilters: (f: VideoFilter) => void;
   selectedLayer: VideoSegment | undefined;
   updateLayer: (id: string, updates: Partial<VideoSegment>) => void;
-  onAIChat: (msg: string) => void;
+  onAIChat: (msg: string, attachments?: ChatAttachment[]) => void;
   isProcessing: boolean;
   chatHistory: ChatMessage[];
   onAddText: () => void;
@@ -29,6 +29,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedLayer, updateLayer, onAIChat, isProcessing, chatHistory, onAddText, layers, onApplyPreset, currentTime
 }) => {
   const [chatInput, setChatInput] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
       'video-transitions': true,
@@ -177,9 +179,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
-    onAIChat(chatInput);
+    if (!chatInput.trim() && attachments.length === 0) return;
+    onAIChat(chatInput, attachments);
     setChatInput("");
+    setAttachments([]);
+  };
+
+  const handleFileAttachment = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+          const result = ev.target?.result as string;
+          // Extract base64 part
+          const base64 = result.split(',')[1];
+          const type = file.type.startsWith('video') ? 'video' : 'image';
+          
+          setAttachments([...attachments, {
+              type,
+              url: result,
+              base64: base64,
+              mimeType: file.type
+          }]);
+      };
+      reader.readAsDataURL(file);
+      e.target.value = ''; // Reset
+  };
+
+  const removeAttachment = (idx: number) => {
+      setAttachments(prev => prev.filter((_, i) => i !== idx));
   };
 
   const toggleFolder = (id: string) => {
@@ -235,6 +264,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       );
   };
+
+  // Chips for AI Actions
+  const aiChips = [
+      { label: "✂️ Cut Video", prompt: "Auto-cut the video to remove silence and improve pacing." },
+      { label: "😂 Add Meme", prompt: "Search and add a funny cat meme video." },
+      { label: "🔊 SFX/Music", prompt: "Add a dramatic impact sound effect." },
+      { label: "🎨 Design", prompt: "Change the text color to yellow and make it bigger." },
+      { label: "📝 Text", prompt: "Add a title that says 'Amazing View' at the start." },
+      { label: "🗑️ Remove", prompt: "Remove the selected layer." }
+  ];
 
   return (
     <div className="w-full h-full bg-[#1e1e1e] flex flex-col text-xs font-sans">
@@ -654,13 +693,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="text-center text-gray-600 mt-10 p-4">
                     <Bot className="w-10 h-10 mx-auto mb-3 opacity-30"/>
                     <h3 className="text-sm font-semibold text-gray-400">Lumina Copilot</h3>
-                    <p className="text-[10px] mt-2 opacity-70">"Create a cinematic intro"</p>
+                    <p className="text-[10px] mt-2 opacity-70">"Upload a file for reference or ask for an edit"</p>
+                    
+                    <div className="flex flex-wrap gap-2 justify-center mt-6">
+                        {aiChips.map((chip, i) => (
+                            <button 
+                                key={i}
+                                onClick={() => onAIChat(chip.prompt, [])}
+                                className="px-3 py-1.5 bg-[#2a2a2a] hover:bg-[#333] border border-[#333] rounded-full text-[10px] text-gray-300 transition-colors"
+                            >
+                                {chip.label}
+                            </button>
+                        ))}
+                    </div>
                   </div>
                )}
                {chatHistory.map((msg, i) => (
                    <div key={i} className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                        <div className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                             <div className={`px-3 py-2 rounded-lg text-xs max-w-[200px] ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-[#2a2a2a] text-gray-200'}`}>
+                                {msg.attachments && msg.attachments.length > 0 && (
+                                    <div className="flex gap-1 mb-2">
+                                        {msg.attachments.map((att, idx) => (
+                                            <div key={idx} className="w-12 h-12 rounded bg-black border border-white/20 overflow-hidden relative">
+                                                {att.type === 'video' ? (
+                                                    <div className="w-full h-full flex items-center justify-center bg-gray-800"><Film className="w-4 h-4"/></div>
+                                                ) : (
+                                                    <img src={att.url} alt="attachment" className="w-full h-full object-cover"/>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                                 {msg.content}
                             </div>
                        </div>
@@ -679,18 +743,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
                <div ref={chatEndRef} />
             </div>
             
+            {/* Input Area */}
             <div className="p-2 border-t border-[#2a2a2a] bg-[#1e1e1e]">
-                <form onSubmit={handleChatSubmit} className="relative">
-                <input 
-                    type="text" 
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Ask AI..."
-                    className="w-full bg-[#121212] border border-[#333] text-white text-xs rounded pl-3 pr-8 py-2 focus:border-blue-500 outline-none"
-                />
-                <button type="submit" disabled={isProcessing} className="absolute right-1 top-1 p-1 text-blue-500 hover:text-white">
-                    <Send className="w-3 h-3" />
-                </button>
+                {attachments.length > 0 && (
+                    <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
+                        {attachments.map((att, i) => (
+                            <div key={i} className="relative w-12 h-12 shrink-0 rounded bg-gray-800 border border-gray-600 group">
+                                <img src={att.url} className="w-full h-full object-cover rounded opacity-70"/>
+                                <button 
+                                    onClick={() => removeAttachment(i)}
+                                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5"
+                                >
+                                    <X className="w-3 h-3"/>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                
+                <form onSubmit={handleChatSubmit} className="relative flex items-center gap-2">
+                    <input 
+                        type="file" 
+                        ref={fileInputRef}
+                        className="hidden" 
+                        accept="image/*,video/*"
+                        onChange={handleFileAttachment}
+                    />
+                    <button 
+                        type="button" 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-2 hover:bg-[#333] rounded text-gray-400 hover:text-white"
+                        title="Attach File for AI"
+                    >
+                        <Paperclip className="w-4 h-4"/>
+                    </button>
+                    
+                    <input 
+                        type="text" 
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Ask AI to edit..."
+                        className="flex-1 bg-[#121212] border border-[#333] text-white text-xs rounded px-3 py-2 focus:border-blue-500 outline-none"
+                    />
+                    <button type="submit" disabled={isProcessing} className="p-2 text-blue-500 hover:text-white">
+                        <Send className="w-4 h-4" />
+                    </button>
                 </form>
             </div>
           </div>

@@ -7,7 +7,7 @@ import { ExportModal } from './components/ExportModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SequenceSettingsModal } from './components/SequenceSettingsModal';
 import { TopMenu } from './components/TopMenu';
-import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe, ProjectFile, LuminaPreset } from './types';
+import { EditingState, PanelType, DEFAULT_FILTERS, VideoSegment, DEFAULT_TRANSFORM, Tool, LayerType, ChatMessage, AnimationKeyframe, ProjectFile, LuminaPreset, ChatAttachment, Track } from './types';
 import { chatWithAI, analyzeVideoForCuts, resetAI } from './services/geminiService';
 
 const App: React.FC = () => {
@@ -20,6 +20,14 @@ const App: React.FC = () => {
     currentTime: 0,
     zoomLevel: 30, // Default 30px per second
     isPlaying: false,
+    // Initialize default tracks
+    tracks: [
+        { id: 2, type: 'video', label: 'V3', isMuted: false, isLocked: false, isHidden: false },
+        { id: 1, type: 'video', label: 'V2', isMuted: false, isLocked: false, isHidden: false },
+        { id: 0, type: 'video', label: 'V1', isMuted: false, isLocked: false, isHidden: false },
+        { id: -1, type: 'audio', label: 'A1', isMuted: false, isLocked: false, isHidden: false },
+        { id: -2, type: 'audio', label: 'A2', isMuted: false, isLocked: false, isHidden: false },
+    ],
     layers: [],
     selectedLayerId: null,
     filters: DEFAULT_FILTERS,
@@ -219,7 +227,10 @@ const App: React.FC = () => {
           state.currentTime < (l.start + l.duration)
       );
 
-      if (activeClip) {
+      // Also check track visibility logic
+      const isTrackHidden = state.tracks.find(t => t.id === 0)?.isHidden;
+
+      if (activeClip && !isTrackHidden) {
           // Calculate Offset inside the clip relative to start
           const timeSinceClipStart = state.currentTime - activeClip.start;
           
@@ -245,7 +256,7 @@ const App: React.FC = () => {
            videoRef.current.style.opacity = '0'; // Hide video during gap
       }
 
-  }, [state.currentTime, state.layers, state.isPlaying]);
+  }, [state.currentTime, state.layers, state.isPlaying, state.tracks]);
 
 
   // --- Actions ---
@@ -259,7 +270,8 @@ const App: React.FC = () => {
           resolution: state.resolution,
           fps: state.fps,
           filters: state.filters,
-          layers: state.layers
+          layers: state.layers,
+          tracks: state.tracks
       };
 
       const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: "application/json" });
@@ -290,6 +302,7 @@ const App: React.FC = () => {
                   fps: projectData.fps || 30,
                   filters: projectData.filters || DEFAULT_FILTERS,
                   layers: projectData.layers.map(l => ({...l, isActive: true})),
+                  tracks: projectData.tracks || prev.tracks,
                   selectedLayerId: null,
                   activePanel: PanelType.PROJECT
               }));
@@ -413,6 +426,50 @@ const App: React.FC = () => {
       }));
   };
 
+  const handleAddTrack = (type: 'video' | 'audio') => {
+      setState(prev => {
+          const tracks = [...prev.tracks];
+          if (type === 'video') {
+               // Find max video ID
+               const videoIds = tracks.filter(t => t.type === 'video').map(t => t.id);
+               const maxId = videoIds.length > 0 ? Math.max(...videoIds) : -1;
+               tracks.push({
+                   id: maxId + 1,
+                   type: 'video',
+                   label: `V${videoIds.length + 1}`,
+                   isMuted: false, isLocked: false, isHidden: false
+               });
+          } else {
+               // Audio IDs are usually negative for separation in sorting or logic, but let's just use decrementing
+               const audioIds = tracks.filter(t => t.type === 'audio').map(t => t.id);
+               const minId = audioIds.length > 0 ? Math.min(...audioIds) : 0;
+               tracks.push({
+                   id: minId - 1,
+                   type: 'audio',
+                   label: `A${audioIds.length + 1}`,
+                   isMuted: false, isLocked: false, isHidden: false
+               });
+          }
+          return { ...prev, tracks };
+      });
+  };
+
+  const handleRemoveTrack = (id: number) => {
+      setState(prev => ({
+          ...prev,
+          tracks: prev.tracks.filter(t => t.id !== id),
+          // Also remove layers on this track? Or move them? For now, we keep them but they won't render
+          layers: prev.layers.filter(l => l.track !== id)
+      }));
+  };
+
+  const handleUpdateTrack = (id: number, updates: Partial<Track>) => {
+      setState(prev => ({
+          ...prev,
+          tracks: prev.tracks.map(t => t.id === id ? { ...t, ...updates } : t)
+      }));
+  };
+
   // Improved Razor Logic
   const handleRazor = (time: number, layerId: string) => {
       setState(prev => {
@@ -457,12 +514,19 @@ const App: React.FC = () => {
   };
 
   // --- AI TOOL EXECUTION ---
-  const handleAIChat = async (msg: string) => {
-      const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: Date.now() };
+  const handleAIChat = async (msg: string, attachments?: ChatAttachment[]) => {
+      const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: Date.now(), attachments };
       setState(prev => ({ ...prev, chatHistory: [...prev.chatHistory, userMsg], isProcessing: true }));
       
       try {
-          const result = await chatWithAI([...state.chatHistory, userMsg], { filters: state.filters, duration: state.duration });
+          // Pass current state context to the AI so it knows about existing layers
+          const currentContext = {
+              filters: state.filters,
+              duration: state.duration,
+              layers: state.layers
+          };
+
+          const result = await chatWithAI([...state.chatHistory, userMsg], currentContext);
           
           // 1. Add AI Text Response
           const aiMsg: ChatMessage = { role: 'assistant', content: result.text, timestamp: Date.now(), sources: result.sources };
@@ -474,54 +538,139 @@ const App: React.FC = () => {
           // 2. Execute Tools
           if (result.toolCalls && result.toolCalls.length > 0) {
               for (const call of result.toolCalls) {
+                  // --- CUT VIDEO ---
                   if (call.name === 'auto_cut_video') {
                       if (state.file) {
                         const mode = call.args?.mode || 'pace';
                         const intensity = call.args?.intensity || 'medium';
-                        
                         try {
                             const cuts = await analyzeVideoForCuts(state.file, state.duration, mode, intensity);
-                            
                             // Populate source details for the new segments
                             const processedCuts = cuts.map(c => ({
                                 ...c, 
                                 src: state.videoUrl || '',
-                                // Ensure srcStartTime is set. If analysis didn't set it (legacy pace mode), simulate it.
                                 srcStartTime: c.srcStartTime !== undefined ? c.srcStartTime : c.start 
                             }));
-                            
-                            // Replace current track 0 layers (Main Video Track)
+                            // Replace current track 0 layers
                             newLayers = [...newLayers.filter(l => l.track !== 0), ...processedCuts];
-                            
-                            // Adjust timeline duration if the cut version is shorter
-                            const newTotalDuration = processedCuts.reduce((acc, curr) => acc + curr.duration, 0);
-                            
-                            sysMsg = mode === 'remove_silence' 
-                                ? "Processed audio: Removed silence & breaths." 
-                                : "Auto-Cut: Stylistic pacing applied.";
-                                
+                            sysMsg = "Auto-Cut applied.";
                         } catch (e) {
-                            sysMsg = "Failed to analyze audio. Video might not have an audio track.";
                             console.error(e);
                         }
                       } else {
                           sysMsg = "No video file loaded to cut.";
                       }
-                  } else if (call.name === 'create_motion_graphic') {
-                      const { text, style } = call.args;
-                      const newId = `ai-text-${Date.now()}`;
-                      const styleConfig: any = { fontFamily: 'Inter', fontSize: 100, color: 'white' };
-                      if (style === 'cyberpunk') { styleConfig.color = '#00ffcc'; styleConfig.textShadow = '0 0 10px #00ffcc'; styleConfig.fontFamily = 'Oswald'; }
-                      if (style === 'luxury') { styleConfig.color = '#ffd700'; styleConfig.fontFamily = 'Playfair Display'; }
-                      if (style === 'bold') { styleConfig.fontFamily = 'Montserrat'; styleConfig.fontWeight = '900'; styleConfig.textTransform = 'uppercase'; }
+
+                  // --- ADD MEME ---
+                  } else if (call.name === 'search_and_add_meme') {
+                      const { keyword, type } = call.args;
+                      const newId = `meme-${Date.now()}`;
+                      
+                      // Mock Meme URLs
+                      let src = 'https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3R4eGdzYjJ6a3J6YjJ6a3J6YjJ6a3J6YjJ6a3J6YjJ6a3J6/3o7aD2saalBwwftBIY/giphy.gif'; 
+                      if (keyword.includes('cat')) src = 'https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif';
+                      if (keyword.includes('dog')) src = 'https://media.giphy.com/media/4Zo41lhzKt6iZ8xff9/giphy.gif';
 
                       newLayers.push({
-                           id: newId, type: 'text', track: 2, start: state.currentTime, duration: 4, label: 'AI Graphic', content: text, speed: 1, 
-                           style: styleConfig,
-                           transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
+                          id: newId, 
+                          type: 'image', 
+                          track: 2, 
+                          start: state.currentTime, 
+                          duration: 3, 
+                          label: `Meme: ${keyword}`, 
+                          src: src, 
+                          speed: 1, 
+                          transform: { ...DEFAULT_TRANSFORM, scale: 80 }, 
+                          anchorPoint: { x: 0.5, y: 0.5 }, 
+                          opacity: 1, 
+                          blendMode: 'normal', 
+                          effects: [], 
+                          animations: [], 
+                          isActive: true, 
+                          locked: false
                       });
-                      sysMsg = `Created ${style} graphic: "${text}"`;
+                      sysMsg = `Added meme: ${keyword}`;
 
+                  // --- ADD SOUND ---
+                  } else if (call.name === 'search_and_add_sound') {
+                      const { keyword, category } = call.args;
+                      const newId = `snd-${Date.now()}`;
+                      const isMusic = category === 'music';
+                      // Mock Sounds: In a real app, integrate Freesound API or similar
+                      // Here we assign a label to an audio track
+                      
+                      newLayers.push({
+                          id: newId,
+                          type: 'audio',
+                          track: isMusic ? -2 : -1, // A2 for music, A1 for SFX default
+                          start: state.currentTime,
+                          duration: isMusic ? 15 : 2,
+                          label: isMusic ? `🎵 ${keyword}` : `🔊 ${keyword}`,
+                          src: '', // No actual audio source in this simulation
+                          speed: 1,
+                          transform: { ...DEFAULT_TRANSFORM },
+                          anchorPoint: { x: 0.5, y: 0.5 },
+                          opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
+                      });
+                      sysMsg = `Added audio: ${keyword}`;
+
+                  // --- MODIFY DESIGN ---
+                  } else if (call.name === 'modify_layer_design') {
+                      const { targetDescription, properties } = call.args;
+                      let targetId = state.selectedLayerId;
+                      
+                      if (!targetId) {
+                          if (targetDescription.includes("text") || targetDescription.includes("title")) {
+                              const l = newLayers.find(l => l.type === 'text');
+                              if (l) targetId = l.id;
+                          } else if (targetDescription.includes("video") || targetDescription.includes("clip")) {
+                              const l = newLayers.find(l => l.type === 'video');
+                              if (l) targetId = l.id;
+                          }
+                      }
+
+                      if (targetId) {
+                          const idx = newLayers.findIndex(l => l.id === targetId);
+                          if (idx !== -1) {
+                              const layer = { ...newLayers[idx] };
+                              
+                              if (properties.color && layer.style) layer.style = { ...layer.style, color: properties.color };
+                              if (properties.scale) layer.transform = { ...layer.transform, scale: properties.scale };
+                              if (properties.font && layer.style) layer.style = { ...layer.style, fontFamily: properties.font };
+                              if (properties.position) {
+                                  if (properties.position === 'center') layer.transform = { ...layer.transform, translateX: 0, translateY: 0 };
+                                  if (properties.position === 'top') layer.transform = { ...layer.transform, translateY: -300 };
+                                  if (properties.position === 'bottom') layer.transform = { ...layer.transform, translateY: 300 };
+                              }
+                              newLayers[idx] = layer;
+                              sysMsg = `Updated design of layer ${layer.label}`;
+                          }
+                      }
+
+                  // --- MANAGE TIMELINE ---
+                  } else if (call.name === 'manage_timeline') {
+                      const { action, details } = call.args;
+                      
+                      if (action === 'remove_layer') {
+                          if (state.selectedLayerId) {
+                              newLayers = newLayers.filter(l => l.id !== state.selectedLayerId);
+                              sysMsg = "Removed selected layer.";
+                          } else {
+                              newLayers.pop(); 
+                              sysMsg = "Removed last layer.";
+                          }
+                      } else if (action === 'add_text') {
+                          const newId = `ai-txt-${Date.now()}`;
+                          newLayers.push({
+                              id: newId, type: 'text', track: 2, start: state.currentTime, duration: 4, label: 'AI Text', 
+                              content: details, speed: 1, 
+                              style: { fontFamily: 'Inter', fontSize: 100, color: '#ffffff' },
+                              transform: { ...DEFAULT_TRANSFORM }, anchorPoint: { x: 0.5, y: 0.5 }, opacity: 1, blendMode: 'normal', effects: [], animations: [], isActive: true, locked: false
+                           });
+                           sysMsg = `Added text: "${details}"`;
+                      }
+
+                  // --- COLOR GRADE ---
                   } else if (call.name === 'apply_cinematic_grade') {
                       const { mood } = call.args;
                       if (mood === 'noir') newFilters = { ...DEFAULT_FILTERS, saturation: 0, contrast: 40, vignette: 50 };
@@ -532,11 +681,6 @@ const App: React.FC = () => {
                       sysMsg = `Applied ${mood} grading.`;
                   }
               }
-          }
-
-          if (sysMsg) {
-             // Optional: Add a system feedback message to chat
-             // aiMsg.content += `\n[System]: ${sysMsg}`;
           }
 
           setState(prev => ({ 
@@ -630,10 +774,17 @@ const App: React.FC = () => {
 
   // --- Rendering Composition ---
   const renderOverlays = () => {
-      return state.layers
-        .filter(l => l.isActive && l.track > 0)
+      // Sort layers by track index to ensure correct z-index stacking (lower track = lower z-index)
+      const visibleLayers = state.layers
+        .filter(l => l.isActive && l.track >= 0) // Only video layers (track >= 0)
         .filter(l => state.currentTime >= l.start && state.currentTime <= (l.start + l.duration))
-        .map(layer => {
+        .filter(l => {
+             const track = state.tracks.find(t => t.id === l.track);
+             return track && !track.isHidden;
+        })
+        .sort((a, b) => a.track - b.track);
+
+      return visibleLayers.map(layer => {
             const isSelected = state.selectedLayerId === layer.id;
             
             // CALCULATE INTERPOLATED VALUES
@@ -655,9 +806,6 @@ const App: React.FC = () => {
             if (blurAmount > 0) filterString += `blur(${blurAmount}px) `;
 
             // Calculate Clip Path (Linear Wipe)
-            // Wipe from 0 to 100. 0 = Full Visible, 100 = Hidden (or vice versa depending on preset)
-            // Implementation: Wipe Left to Right
-            // inset(0 0 0 0) is visible. inset(0 100% 0 0) is hidden from right.
             let clipPathString = '';
             if (wipeProgress > 0) {
                 clipPathString = `inset(0 ${Math.min(100, wipeProgress)}% 0 0)`;
@@ -902,6 +1050,7 @@ const App: React.FC = () => {
                             zoomLevel={state.zoomLevel}
                             setZoomLevel={(z) => setState(s => ({...s, zoomLevel: z}))}
                             layers={state.layers}
+                            tracks={state.tracks}
                             selectedLayerId={state.selectedLayerId}
                             onSeek={(t) => {
                                 if (videoRef.current) videoRef.current.currentTime = t;
@@ -912,6 +1061,9 @@ const App: React.FC = () => {
                             onUpdateLayer={updateLayer}
                             onDuplicateLayer={handleDuplicateLayer}
                             onDeleteLayer={handleDeleteLayer}
+                            onUpdateTrack={handleUpdateTrack}
+                            onAddTrack={handleAddTrack}
+                            onRemoveTrack={handleRemoveTrack}
                             activeTool={state.activeTool}
                         />
                      </div>

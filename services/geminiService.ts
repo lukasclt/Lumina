@@ -38,39 +38,90 @@ const getAI = () => {
 
 const cutVideoTool: FunctionDeclaration = {
     name: "auto_cut_video",
-    description: "Analyzes the video. Use 'mode: remove_silence' to cut breaths/pauses. Use 'mode: pace' for rhythmic editing.",
+    description: "Analyzes the video audio to make smart cuts. Use for pacing or removing silence.",
     parameters: { 
         type: Type.OBJECT, 
         properties: {
             mode: {
                 type: Type.STRING,
                 enum: ["remove_silence", "pace"],
-                description: "Choose 'remove_silence' to cut low volume parts (breaths), or 'pace' for stylistic cuts."
+                description: "Choose 'remove_silence' to cut low volume parts, or 'pace' for dynamic stylistic cuts."
             },
             intensity: {
                 type: Type.STRING,
                 enum: ["low", "medium", "high"],
-                description: "For silence: threshold sensitivity. For pace: speed of cuts."
+                description: "How aggressive the cut should be."
             }
         }, 
         required: ["mode"] 
     }
 };
 
-const motionGraphicTool: FunctionDeclaration = {
-    name: "create_motion_graphic",
-    description: "Creates a professional motion graphic layer (text) with animations.",
+const memeTool: FunctionDeclaration = {
+    name: "search_and_add_meme",
+    description: "Searches for a meme (video or image) from the internet and adds it to the timeline.",
     parameters: {
         type: Type.OBJECT,
         properties: {
-            text: { type: Type.STRING, description: "The text content to display." },
-            style: { 
+            keyword: { type: Type.STRING, description: "The search term for the meme (e.g., 'cat crying', 'explosion', 'confused math')." },
+            type: { 
                 type: Type.STRING, 
-                enum: ["cyberpunk", "minimal", "bold", "luxury"],
-                description: "The visual style."
+                enum: ["image", "video"],
+                description: "Whether to find an image/gif or a video meme."
             }
         },
-        required: ["text", "style"]
+        required: ["keyword", "type"]
+    }
+};
+
+const soundTool: FunctionDeclaration = {
+    name: "search_and_add_sound",
+    description: "Searches for a sound effect (SFX) or background music and adds it to an audio track.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            keyword: { type: Type.STRING, description: "Description of the sound (e.g., 'vine boom', 'lofi beat', 'whoosh transition')." },
+            category: { 
+                type: Type.STRING, 
+                enum: ["sfx", "music"],
+                description: "Is it a short sound effect (SFX) or background music?"
+            }
+        },
+        required: ["keyword", "category"]
+    }
+};
+
+const designTool: FunctionDeclaration = {
+    name: "modify_layer_design",
+    description: "Modifies the style, position, or scale of an existing layer (text or image/video) on the timeline.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            targetDescription: { type: Type.STRING, description: "Description of the layer to modify (e.g., 'the big title', 'the video clip')." },
+            properties: {
+                type: Type.OBJECT,
+                properties: {
+                    color: { type: Type.STRING, description: "Hex color code for text." },
+                    scale: { type: Type.NUMBER, description: "Scale percentage (100 is normal)." },
+                    position: { type: Type.STRING, enum: ["center", "top", "bottom", "left", "right"], description: "Predefined position." },
+                    font: { type: Type.STRING, description: "Font family name." }
+                }
+            }
+        },
+        required: ["targetDescription", "properties"]
+    }
+};
+
+const timelineTool: FunctionDeclaration = {
+    name: "manage_timeline",
+    description: "Adds text or removes items from the timeline.",
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            action: { type: Type.STRING, enum: ["add_text", "remove_layer"], description: "Action to perform." },
+            details: { type: Type.STRING, description: "For add_text: the content. For remove_layer: description of what to remove." }
+        },
+        required: ["action", "details"]
     }
 };
 
@@ -263,7 +314,7 @@ export const analyzeVideoForCuts = async (file: File, duration: number, mode: 'r
 
 export const chatWithAI = async (
   history: ChatMessage[], 
-  currentContext: { filters: VideoFilter, duration: number }
+  currentContext: { filters: VideoFilter, duration: number, layers: VideoSegment[] }
 ): Promise<{ 
     text: string; 
     toolCalls: any[]; 
@@ -272,32 +323,66 @@ export const chatWithAI = async (
   const ai = getAI();
   if (!ai) return { text: "⚠️ API Key not configured. Go to Edit > Preferences to set your Google Gemini API Key.", toolCalls: [] };
 
+  // 1. Build Layer Context String
+  const layersDesc = currentContext.layers.map((l, i) => 
+    `[${i}] ID:${l.id} Type:${l.type} Label:"${l.label}" Start:${l.start.toFixed(1)}s Content:"${l.content || ''}" Color:${l.style?.color || 'N/A'}`
+  ).join('\n');
+
   const systemInstruction = `
     You are Lumina, a Professional AI Video Editor.
-    Context: Video Duration ${currentContext.duration.toFixed(1)}s.
     
-    TASKS:
-    1. CUTTING: If user mentions "silence", "breaths", "pauses", or "clean up audio", call 'auto_cut_video' with mode='remove_silence'.
-       If user mentions "fast cut", "dynamic", "music video style", call 'auto_cut_video' with mode='pace'.
-    2. GRAPHICS: If user wants text/titles, call 'create_motion_graphic'. Choose a style that fits the request.
-    3. COLOR: If user wants specific looks, call 'apply_cinematic_grade'.
+    CURRENT PROJECT CONTEXT:
+    - Duration: ${currentContext.duration.toFixed(1)}s
+    - Existing Layers (Timeline):
+    ${layersDesc}
     
-    RESPONSE:
-    Be short, professional, and confirm the action. Example: "Removing silent parts to tighten the flow."
+    CAPABILITIES:
+    1. CUTTING: Remove silence or pace video ('auto_cut_video').
+    2. MEMES/ASSETS: Add memes from internet ('search_and_add_meme').
+    3. SOUND: Add Sound Effects (SFX) or Background Music ('search_and_add_sound').
+    4. DESIGN: Modify ANY visual property of a layer (color, scale, position) using 'modify_layer_design'.
+    5. TIMELINE: Add text or remove specific layers ('manage_timeline').
+    6. COLOR: Apply color grading ('apply_cinematic_grade').
+    
+    INSTRUCTIONS:
+    - If the user sends an image, analyze it and use it as a reference or inspiration.
+    - If asked to "put a cat meme", use 'search_and_add_meme'.
+    - If asked to "add a vine boom", use 'search_and_add_sound' with category 'sfx'.
+    - If asked to "add lofi music", use 'search_and_add_sound' with category 'music'.
+    - If asked to "change the text color to blue", identify the text layer in Context and use 'modify_layer_design'.
+    - Be concise.
   `;
 
-  const contents = history.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-  }));
+  // 2. Format Contents (Multimodal)
+  const contents = history.map(msg => {
+      const parts: any[] = [{ text: msg.content }];
+      
+      if (msg.attachments) {
+          msg.attachments.forEach(att => {
+              if (att.base64 && att.mimeType) {
+                  parts.push({
+                      inlineData: {
+                          mimeType: att.mimeType,
+                          data: att.base64
+                      }
+                  });
+              }
+          });
+      }
+      
+      return {
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: parts
+      };
+  });
 
   const toolsConfig: Tool[] = [
-      { functionDeclarations: [cutVideoTool, motionGraphicTool, colorGradeTool] }
+      { functionDeclarations: [cutVideoTool, memeTool, soundTool, designTool, timelineTool, colorGradeTool] }
   ];
 
   try {
     const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash-image", 
         contents: contents,
         config: {
             systemInstruction: systemInstruction,
@@ -315,7 +400,7 @@ export const chatWithAI = async (
             args: p.functionCall?.args
         })) || [];
         
-    const finalText = text || (toolCalls.length > 0 ? "Processing edits..." : "I didn't understand that.");
+    const finalText = text || (toolCalls.length > 0 ? "Executing edits..." : "I didn't understand that.");
 
     return { text: finalText, toolCalls };
 
